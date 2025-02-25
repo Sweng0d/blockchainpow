@@ -2,12 +2,16 @@ use secp256k1::{Secp256k1, Message, PublicKey};
 use secp256k1::ecdsa::Signature; 
 use sha2::{Sha256, Digest};
 use crate::wallet::wallet::Wallet;
+use serde::{Serialize, Deserialize};
 
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct Transaction {
-    pub from_address: String,
+    pub from_address: String,   
     pub to_address: String,
     pub amount: u64,
+    #[serde(skip)]
     pub public_key: Option<PublicKey>,
+    #[serde(skip)]
     pub signature: Option<Signature>,
 }
 
