@@ -5,7 +5,7 @@ use serde::{Serialize, Deserialize};
 use crate::wallet::transaction::Transaction;
 use serde_json;
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct Block {
     pub index: u64,
     pub timestamp: i64,
@@ -29,6 +29,25 @@ impl Block {
             previous_hash,
             hash,
             nonce,
+        }
+    }
+
+    pub fn mine_block(&mut self, difficulty: u32) {
+        let target_prefix = "0".repeat(difficulty as usize);
+
+        loop {
+            self.hash = calculate_hash(
+                self.index,
+                self.timestamp,
+                &self.transactions,
+                &self.previous_hash,
+                self.nonce
+            );
+
+            if self.hash.starts_with(&target_prefix) {
+                break;
+            }
+            self.nonce += 1;
         }
     }
 }

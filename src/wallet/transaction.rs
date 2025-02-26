@@ -4,7 +4,7 @@ use sha2::{Sha256, Digest};
 use crate::wallet::wallet::Wallet;
 use serde::{Serialize, Deserialize};
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct Transaction {
     pub from_address: String,   
     pub to_address: String,
