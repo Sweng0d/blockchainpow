@@ -20,9 +20,6 @@ impl Transaction {
         format!("{}|{}|{}", self.from_address, self.to_address, self.amount)
     }
 
-    //The user calls -> new_signed()
-    //The node calls -> is_valid()
-
     pub fn new_signed(from_wallet: &Wallet, to_address: String, amount: u64) -> Self {
         let from_address = from_wallet.address.clone();
 
@@ -43,6 +40,7 @@ impl Transaction {
         tx
     }
 
+    //to add transactions to the mempool we check if they are valid
     pub fn is_valid(&self) -> bool {
         if self.public_key.is_none() || self.signature.is_none() {
             return false;
@@ -62,17 +60,6 @@ impl Transaction {
 
         secp.verify_ecdsa(&message, sig, pub_key).is_ok()
     }
-
-    /*pub fn create_and_check(from_wallet: &Wallet, to_address: String, amount: u64) -> Result<Self, String> {
-        let tx = Self::new_signed(from_wallet, to_address, amount);
-
-        if tx.is_valid() {
-            Ok(tx)
-        } else {
-            Err("Falha ao criar transação válida".to_string())
-        }
-    }
-    */
 }
 
 

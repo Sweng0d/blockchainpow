@@ -16,6 +16,7 @@ pub struct Block {
 }
 
 impl Block {
+    //create a new block
     pub fn new(index: u64, transactions: Vec<Transaction>, previous_hash: String) -> Block {
         let time_created = Utc::now().timestamp();
         let nonce: u64 = 0;
@@ -32,6 +33,7 @@ impl Block {
         }
     }
 
+    //use that to add_block to the blockchain
     pub fn mine_block(&mut self, difficulty: u32) {
         let target_prefix = "0".repeat(difficulty as usize);
 
@@ -52,6 +54,7 @@ impl Block {
     }
 }
 
+//calculate hash, used in mine_block below
 pub fn calculate_hash(index: u64, timestamp: i64, transactions: &Vec<Transaction>, previous_hash: &str, nonce: u64) -> String {
     let mut hasher = Sha256::new();
 

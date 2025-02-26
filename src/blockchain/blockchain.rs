@@ -1,29 +1,43 @@
-use crate::Block;
+use crate::blockchain::block::Block;
 use serde::{Serialize, Deserialize};
 use crate::wallet::transaction::Transaction;
 use crate::blockchain::block::calculate_hash;
+use crate::wallet::wallet::Wallet;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Blockchain {
     pub blocks: Vec<Block>,
+    pub pending_transactions: Vec<Transaction>,
     pub difficulty: u32,
 }
 
 impl Blockchain {
+    //create a new blockchain
     pub fn new() -> Self {
         
         let mut blockchain = Blockchain {
             blocks: Vec::new(),
-            difficulty: 3,
+            pending_transactions: Vec::new(),
+            difficulty: 4,
         };
 
-        let first_block = Block::new(0, vec![], "0".to_string());
-        blockchain.blocks.push(first_block);
+        let genesis = Block::new(0, vec![], "0".to_string());
+        blockchain.blocks.push(genesis);
 
         blockchain 
     }
 
-    pub fn add_block(&mut self, transactions: Vec<Transaction>) {
+    //add transactions to mempool
+    pub fn add_transaction_to_mempool(&mut self, tx: Transaction) {
+        if tx.is_valid() {
+            self.pending_transactions.push(tx);
+        } else {
+            println!("Invalid Transaction, ignoring...");
+        }
+    }
+
+    //add block to the blockchain. It will calculate_hash and mineblock, and afterwards add it to theblockchain.
+    pub fn add_block(&mut self) {
         let index = self.blocks.len() as u64;
         
         let previous_hash = if let Some(last_block) = self.blocks.last() {
@@ -32,9 +46,13 @@ impl Blockchain {
             "0"
         };
 
+        let txs = self.pending_transactions.clone();
+
+        self.pending_transactions.clear();
+
         let mut new_block = Block::new(
             index,
-            transactions,
+            txs,
             previous_hash.to_string(),
         );
         new_block.mine_block(self.difficulty);
@@ -43,6 +61,7 @@ impl Blockchain {
         
     }
 
+    //check all the blockchain to se if they are valid
     pub fn is_valid(&self) -> bool {
         for i in 1..self.blocks.len() {
             let current = &self.blocks[i];
@@ -69,6 +88,7 @@ impl Blockchain {
         
     }
 
+    //you see if there is a longer chain than the one you are using
     pub fn replace_chain_if_longer(&mut self, new_chain: &Blockchain) -> bool {
         if !new_chain.is_valid() {
             return false;
@@ -81,6 +101,20 @@ impl Blockchain {
             false
         }
     }
+
+    //sign a transaction and add it to the mempool
+    pub fn new_signed_tx_and_added_mempool(
+        &mut self,
+        from_wallet: &Wallet,
+        to_address: String,
+        amount: u64
+    ) {
+        // 1) Cria a transação assinada
+        let tx = Transaction::new_signed(from_wallet, to_address, amount);
+        // 2) Adiciona no mempool (ou chame self.add_transaction(tx))
+        self.add_transaction_to_mempool(tx);
+    }
+
 }
 
 #[cfg(test)]
