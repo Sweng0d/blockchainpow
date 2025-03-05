@@ -7,7 +7,7 @@ use crate::wallet::wallet::Wallet;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Blockchain {
     pub blocks: Vec<Block>,
-    pub pending_transactions: Vec<Transaction>,
+    pub pending_transactions: Vec<Transaction>, //mempool
     pub difficulty: u32,
 }
 

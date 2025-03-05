@@ -1,6 +1,7 @@
 use crate::blockchain::blockchain::Blockchain;
 use crate::blockchain::block::Block;
 use crate::Transaction;
+use crate::generate_wallet;
 
 pub type NodeId = u32; 
 
@@ -64,4 +65,28 @@ impl Node {
 pub enum NetworkMessage {
     TransactionMessage(Transaction),
     // futuramente: BlockMessage(Block), etc.
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_send_transaction_to_mempool() {
+        let mut node1 = Node::new(1);
+        let mut node2 = Node::new(2);
+
+        node1.peers = vec![2];
+        node2.peers = vec![1];
+
+        let wallet1 = generate_wallet();
+
+        let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 30);
+        node1.send_transaction(&mut node2, tx1.clone());
+
+        assert_eq!(node2.blockchain.pending_transactions.len(), 1);
+
+        let received_tx = &node2.blockchain.pending_transactions[0];
+        assert_eq!(*received_tx, tx1.clone());
+    }
 }
