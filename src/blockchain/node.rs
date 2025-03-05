@@ -2,6 +2,7 @@ use crate::blockchain::blockchain::Blockchain;
 use crate::blockchain::block::Block;
 use crate::Transaction;
 use crate::generate_wallet;
+use crate::wallet::transaction::TransactionError;
 
 pub type NodeId = u32; 
 
@@ -27,8 +28,16 @@ impl Node {
         from.blockchain.clone()
     }
 
-    pub fn send_transaction(&self, to: &mut Node, tx: Transaction) {
-        to.receive_transaction(tx);
+    pub fn send_transaction(&mut self, to: &mut Node, tx: Result<Transaction, TransactionError>) {
+        match tx {
+            Ok(tx) => {
+                self.blockchain.add_transaction_to_mempool(tx.clone());
+                to.receive_transaction(tx);
+            }
+            Err(e) => {
+                eprintln!("Transaction Rejected: {:?}", e);
+            }
+        }        
     }
 
     pub fn receive_transaction(&mut self, tx: Transaction) {
@@ -81,12 +90,47 @@ mod tests {
 
         let wallet1 = generate_wallet();
 
-        let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 30);
-        node1.send_transaction(&mut node2, tx1.clone());
+        let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 30).expect("Failed to create the transaction");
+        node1.send_transaction(&mut node2, Ok(tx1.clone()));
 
         assert_eq!(node2.blockchain.pending_transactions.len(), 1);
 
         let received_tx = &node2.blockchain.pending_transactions[0];
         assert_eq!(*received_tx, tx1.clone());
+
+        assert_eq!(node1.blockchain.pending_transactions[0], tx1.clone());
+    }
+
+    #[test]
+    fn test_mining_locally_includes_transactions() {
+        let mut node1 = Node::new(1);
+
+        let wallet1 = generate_wallet();
+        let wallet2 = generate_wallet();
+
+        let tx1 = Transaction::new_signed(&wallet1, wallet2.address.clone(), 50).expect("Failed to create the transaction");
+        let tx2 = Transaction::new_signed(&wallet1, wallet2.address.clone(), 200).expect("Failed to create the transaction");
+        let tx_invalid_result = Transaction::new_signed(&wallet1, wallet2.address.clone(), 0);
+
+        assert!(
+            tx_invalid_result.is_err(),
+            "Transação com amount=0 deveria falhar e retornar Err"
+        );
+
+        node1.receive_transaction(tx1.clone());
+        node1.receive_transaction(tx2.clone());
+
+        node1.blockchain.add_block();
+
+        let last_block = node1
+        .blockchain
+        .blocks
+        .last()
+        .expect("Haverá pelo menos o bloco gênese e o bloco minerado");
+
+        assert_eq!(last_block.transactions.len(), 2);
+        assert!(last_block.transactions.contains(&tx1));
+        assert!(last_block.transactions.contains(&tx2));
+
     }
 }

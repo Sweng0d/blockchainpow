@@ -15,12 +15,22 @@ pub struct Transaction {
     pub signature: Option<Signature>,
 }
 
+#[derive(Debug, Clone)]
+pub enum TransactionError {
+    InvalidAmount,
+    // Can have other errors -> InvalidSignature etc
+}
+
 impl Transaction {
     fn payload_string(&self) -> String {
         format!("{}|{}|{}", self.from_address, self.to_address, self.amount)
     }
 
-    pub fn new_signed(from_wallet: &Wallet, to_address: String, amount: u64) -> Self {
+    //não tem que ser from Wallet to: Wallet?
+    pub fn new_signed(from_wallet: &Wallet, to_address: String, amount: u64) -> Result<Transaction, TransactionError> {
+        if amount == 0 {
+            return Err(TransactionError::InvalidAmount);
+        }
         let from_address = from_wallet.address.clone();
 
         let mut tx = Transaction {
@@ -37,7 +47,7 @@ impl Transaction {
 
         tx.signature = Some(sig);
 
-        tx
+        Ok(tx)
     }
 
     //to add transactions to the mempool we check if they are valid

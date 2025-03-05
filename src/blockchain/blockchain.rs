@@ -107,7 +107,7 @@ impl Blockchain {
         amount: u64
     ) {
         let tx = Transaction::new_signed(from_wallet, to_address, amount);
-        self.add_transaction_to_mempool(tx);
+        self.add_transaction_to_mempool(tx.unwrap());
     }
 
     //recebe um bloco da rede

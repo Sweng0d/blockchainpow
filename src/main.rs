@@ -31,7 +31,7 @@ fn main() {
     println!("Carteira3 address: {}", wallet3.address);
 
     // 3) node1 (nodes[0]) cria transação e envia a node2 (nodes[1])
-    let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 50);
+    let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 50).expect("Failed to create the transaction");
 
     // --- BLOCO para evitar conflito do borrow checker ---
     {
@@ -40,7 +40,7 @@ fn main() {
         let mut temp_node0 = mem::replace(&mut nodes[0], Node::new(999));
 
         // Agora chamamos normalmente:
-        temp_node0.send_transaction(&mut nodes[1], tx1);
+        temp_node0.send_transaction(&mut nodes[1], Ok(tx1));
 
         // Recoloca node1 no lugar
         nodes[0] = temp_node0;
