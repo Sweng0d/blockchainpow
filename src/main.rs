@@ -1,42 +1,89 @@
 mod blockchain;
 mod wallet;
 
-// Importe as structs e métodos que precisa
-use crate::blockchain::blockchain::Blockchain;
-use crate::wallet::wallet::{generate_wallet};
+use crate::blockchain::node::Node;
+use crate::wallet::wallet::generate_wallet;
 use crate::wallet::transaction::Transaction;
+use serde_json::json;
 
 fn main() {
-    println!("=== Inicializando Blockchain PoW em Rust ===");
+    println!("=== Simulação de múltiplos nós com Proof of Work ===");
 
-    // 1) Cria o Blockchain (com difficulty = 3, segundo seu código)
-    let mut blockchain = Blockchain::new();
-    println!("Criado Blockchain com dificuldade = {}", blockchain.difficulty);
+    // Crie um vetor de nós:
+    let mut nodes = vec![
+        Node::new(1),
+        Node::new(2),
+        Node::new(3),
+    ];
 
-    // 2) Gera uma carteira
-    let my_wallet = generate_wallet();
-    println!("Minha carteira address: {}", my_wallet.address);
+    // Configure peers
+    nodes[0].peers = vec![2, 3];
+    nodes[1].peers = vec![1, 3];
+    nodes[2].peers = vec![1, 2];
 
-    // 3) Criar transações e colocar no mempool
-    let tx1 = Transaction::new_signed(&my_wallet, "Alice".to_string(), 10);
-    let tx2 = Transaction::new_signed(&my_wallet, "Bob".to_string(), 20);
+    // 2) Gera duas carteiras
+    let wallet1 = generate_wallet();
+    let wallet2 = generate_wallet();
+    let wallet3 = generate_wallet();
 
-    // Use a função de inserir no mempool
-    blockchain.add_transaction_to_mempool(tx1);
-    blockchain.add_transaction_to_mempool(tx2);
-    blockchain.new_signed_tx_and_added_mempool(&my_wallet, "Bob".to_string(), 50);
+    println!("Carteira1 address: {}", wallet1.address);
+    println!("Carteira2 address: {}", wallet2.address);
+    println!("Carteira3 address: {}", wallet3.address);
 
-    // 4) Agora “minerar” chamando add_block
-    //    Isso pega pending_transactions, cria um bloco, faz PoW e insere no 'blocks'
-    println!("Minerando bloco com as transações pendentes...");
-    blockchain.add_block();  // Repare que em seu código, add_block() não recebe nada e usa mempool
+    // 3) node1 (nodes[0]) cria transação e envia a node2 (nodes[1])
+    let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 50);
 
-    // 5) Verificar se a chain continua válida
-    println!("Blockchain está válida? {}", blockchain.is_valid());
+    // --- BLOCO para evitar conflito do borrow checker ---
+    {
+        use std::mem;
+        // Tira temporariamente node1 do vetor
+        let mut temp_node0 = mem::replace(&mut nodes[0], Node::new(999));
 
-    // 6) Exibir em JSON
-    let json_str = serde_json::to_string_pretty(&blockchain)
-        .expect("Falha ao serializar blockchain para JSON");
+        // Agora chamamos normalmente:
+        temp_node0.send_transaction(&mut nodes[1], tx1);
 
-    println!("=== Blockchain em JSON ===\n{}", json_str);
+        // Recoloca node1 no lugar
+        nodes[0] = temp_node0;
+    }
+
+    // Agora node2 tem transação pendente
+    println!("\nNode2 vai minerar bloco com transações pendentes...");
+    nodes[1].blockchain.add_block();
+    // node2 agora tem 2 blocos (gênese + bloco recém-minerado)
+
+    // 4) node2 broadcasta esse bloco a node1
+    let last_block = nodes[1].blockchain.blocks.last().unwrap().clone();
+    println!("Node2 broadcasta bloco de index {} para node1", last_block.index);
+
+    // --- BLOCO para evitar conflito no broadcast_block ---
+    {
+        use std::mem;
+        // Tira temporariamente node2 do vetor
+        let mut temp_node1 = mem::replace(&mut nodes[1], Node::new(999));
+
+        // Chamada original:
+        temp_node1.broadcast_block(last_block, &temp_node1, &mut nodes);
+
+        // Recoloca node2 no lugar
+        nodes[1] = temp_node1;
+    }
+
+    // 5) Após o broadcast, renomeamos localmente para imprimir ou analisar
+    let node1 = &nodes[0];
+    let node2 = &nodes[1];
+
+    println!("\nVerificando se node1 e node2 têm blockchains válidas:");
+    println!("Node1 blockchain is valid? {}", node1.blockchain.is_valid());
+    println!("Node2 blockchain is valid? {}", node2.blockchain.is_valid());
+
+    // 6) Exibir blockchains em JSON
+    let json_node1 = serde_json::to_string_pretty(&node1.blockchain)
+        .expect("Fail to serialize node1 chain");
+    let json_node2 = serde_json::to_string_pretty(&node2.blockchain)
+        .expect("Fail to serialize node2 chain");
+
+    println!("\n=== Node1 Blockchain ===\n{}", json_node1);
+    println!("\n=== Node2 Blockchain ===\n{}", json_node2);
+
+    println!("\n=== Fim da simulação ===");
 }

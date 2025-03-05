@@ -52,9 +52,28 @@ impl Block {
             self.nonce += 1;
         }
     }
+
+    //verifica o hash do bloco e se a dificuldade está de acordo
+    pub fn is_valid(&self, difficulty: u32) -> bool {
+        // 1) Recalcular o hash com base em index, timestamp, transactions, previous_hash, nonce
+        let recalculated = calculate_hash(
+            self.index,
+            self.timestamp,
+            &self.transactions,
+            &self.previous_hash,
+            self.nonce
+        );
+        if recalculated != self.hash {
+            return false;
+        }
+
+        // 2) Checar se o hash começa com zeros (PoW)
+        let target_prefix = "0".repeat(difficulty as usize);
+        self.hash.starts_with(&target_prefix)
+    }
 }
 
-//calculate hash, used in mine_block below
+//calculate hash, used in mine_block above
 pub fn calculate_hash(index: u64, timestamp: i64, transactions: &Vec<Transaction>, previous_hash: &str, nonce: u64) -> String {
     let mut hasher = Sha256::new();
 
