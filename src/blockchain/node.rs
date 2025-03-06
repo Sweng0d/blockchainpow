@@ -45,13 +45,9 @@ impl Node {
         self.blockchain.add_transaction_to_mempool(tx);
     }
 
-    pub fn broadcast_block(&self, block: Block, from_node: &Node, nodes: &mut [Node]) {
-        for peer_id in &self.peers {
-            // 1) Procura peer_node
-            if let Some(peer_node) = nodes.iter_mut().find(|n| n.node_id == *peer_id) {
-                // 2) Chama receive_block passando *somente* block.clone() e from_node
-                peer_node.receive_block(block.clone(), from_node);
-            }
+    pub fn broadcast_block(&self, block: Block, from_node: &Node, nodes: &mut [&mut Node]) {
+        for peer_node in nodes.iter_mut() {
+            peer_node.receive_block(block.clone(), from_node);
         }
     }
     
@@ -131,6 +127,63 @@ mod tests {
         assert_eq!(last_block.transactions.len(), 2);
         assert!(last_block.transactions.contains(&tx1));
         assert!(last_block.transactions.contains(&tx2));
+
+    }
+
+    #[test]
+    fn test_broadcast_block() {
+        let mut node1 = Node::new(1);
+        let mut node2 = Node::new(2);
+        let mut node3 = Node::new(3);
+
+        node1.peers = vec![2, 3];
+        node2.peers = vec![1, 3];
+        node3.peers = vec![1, 2];
+
+        let wallet1 = generate_wallet();
+        let wallet2 = generate_wallet();
+
+        let tx1 = Transaction::new_signed(&wallet1, wallet2.address.clone(), 50).expect("Failed to create the transaction");
+        let tx2 = Transaction::new_signed(&wallet1, wallet2.address.clone(), 200).expect("Failed to create the transaction");
+
+        node1.receive_transaction(tx1.clone());
+        node1.receive_transaction(tx2.clone());
+
+        node1.blockchain.add_block();
+        assert_eq!(node1.blockchain.blocks.len(), 2, "Node1 has genesis + 1 block");
+
+        let last_block = node1
+        .blockchain
+        .blocks
+        .last()
+        .expect("Node1 deve ter pelo menos 2 blocos")
+        .clone();
+
+        {
+            use std::mem;
+            // técnica para “pegar emprestado” node1 sem conflitar
+            let mut temp_node1 = mem::replace(&mut node1, Node::new(999));
+            temp_node1.broadcast_block(last_block.clone(), &temp_node1, &mut [&mut node2, &mut node3]);
+            // Recoloca node1
+            node1 = temp_node1;
+        }
+
+        assert_eq!(node2.blockchain.blocks.len(), 2, "Node2 deve ter recebido o bloco via broadcast");
+        let last_block_node2 = node2.blockchain.blocks.last().unwrap();
+        assert_eq!(last_block_node2.transactions.len(), 2);
+        assert!(last_block_node2.transactions.contains(&tx1));
+        assert!(last_block_node2.transactions.contains(&tx2));
+
+        assert_eq!(
+            node3.blockchain.blocks.len(),
+            2,
+            "Node3 deve ter recebido o bloco via broadcast"
+        );
+        let last_block_node3 = node3.blockchain.blocks.last().unwrap();
+        assert_eq!(last_block_node3.transactions.len(), 2);
+        assert!(last_block_node3.transactions.contains(&tx1));
+        assert!(last_block_node3.transactions.contains(&tx2));
+
 
     }
 }

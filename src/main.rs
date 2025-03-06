@@ -21,7 +21,7 @@ fn main() {
     nodes[1].peers = vec![1, 3];
     nodes[2].peers = vec![1, 2];
 
-    // 2) Gera duas carteiras
+    // 2) Gera três carteiras
     let wallet1 = generate_wallet();
     let wallet2 = generate_wallet();
     let wallet3 = generate_wallet();
@@ -31,7 +31,8 @@ fn main() {
     println!("Carteira3 address: {}", wallet3.address);
 
     // 3) node1 (nodes[0]) cria transação e envia a node2 (nodes[1])
-    let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 50).expect("Failed to create the transaction");
+    let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 50)
+        .expect("Failed to create the transaction");
 
     // --- BLOCO para evitar conflito do borrow checker ---
     {
@@ -61,8 +62,11 @@ fn main() {
         // Tira temporariamente node2 do vetor
         let mut temp_node1 = mem::replace(&mut nodes[1], Node::new(999));
 
-        // Chamada original:
-        temp_node1.broadcast_block(last_block, &temp_node1, &mut nodes);
+        // Cria um vetor de referências mutáveis para todos os nós
+        let mut node_refs = nodes.iter_mut().collect::<Vec<&mut Node>>();
+
+        // Agora chamamos broadcast_block passando o slice de &mut Node
+        temp_node1.broadcast_block(last_block, &temp_node1, &mut node_refs[..]);
 
         // Recoloca node2 no lugar
         nodes[1] = temp_node1;
