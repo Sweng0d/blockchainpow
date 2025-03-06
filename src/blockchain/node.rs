@@ -1,28 +1,67 @@
 use crate::blockchain::blockchain::Blockchain;
 use crate::blockchain::block::Block;
 use crate::wallet::transaction::{Transaction, TransactionError};
+use crate::blockchain::node_registry::{register_id, unregister_id};
 
 use std::sync::{Arc, Mutex};
+use std::fmt;
 
-
-
+/// Ajuste aqui se quiser mudar o tipo do ID.
 pub type NodeId = u32;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Node {
     pub node_id: NodeId,
     pub blockchain: Blockchain,
     pub peers: Vec<NodeId>,
 }
 
+/// Possíveis erros ao criar nós
+#[derive(Debug)]
+pub enum NodeError {
+    DuplicateId(NodeId),
+    // outros erros se quiser
+}
+
+impl fmt::Display for NodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            NodeError::DuplicateId(id) => write!(f, "ID {} is already in use", id),
+        }
+    }
+}
+
 impl Node {
-    //create a new node
+    /// Construtor que recebe um ID escolhido.
+    /// Se o ID estiver em uso, faz panic (poderia retornar Result, se preferir).
     pub fn new(node_id: NodeId) -> Self {
-        let blockchain = Blockchain::new(); // Gênese
+        // Verifica e registra a ID (fazendo unwrap para simplificar).
+        // Se já estiver em uso, panic.
+        register_id(node_id).unwrap_or_else(|msg| {
+            panic!("Failed to create Node with ID {}: {}", node_id, msg);
+        });
+
+        let blockchain = Blockchain::new();
         Self {
             node_id,
             blockchain,
             peers: Vec::new(),
+        }
+    }
+
+    /// Construtor que gera um ID aleatório até achar um que não seja usado.
+    pub fn new_random_id() -> Self {
+        loop {
+            let random_id = rand::random::<u32>();
+            if register_id(random_id).is_ok() {
+                // Se conseguiu registrar, sai do loop
+                return Self {
+                    node_id: random_id,
+                    blockchain: Blockchain::new(),
+                    peers: Vec::new(),
+                };
+            }
+            // caso contrário, repete
         }
     }
 
@@ -51,30 +90,26 @@ impl Node {
         self.blockchain.add_transaction_to_mempool(tx);
     }
 
-    //broadcast the block to other peers
+    // broadcast the block to other peers
     pub fn broadcast_block(&mut self, block: Block, all_nodes: &[Arc<Mutex<Node>>]) {
-        // each peer will call here 'receive_block'
-
         for &peer_id in &self.peers {
             let mut peer = all_nodes[peer_id as usize].lock().unwrap();
             peer.receive_block(block.clone(), self);
         }
     }
 
-    //receive the block from other node and decides whether it adds the block or replace the chain
+    // receive the block from other node and decides whether it adds or replace
     pub fn receive_block(&mut self, block: Block, from_node: &Node) {
         let local_len = self.blockchain.blocks.len();
         let remote_index = block.index as usize;
 
-        //if it is the next block it just add it
         if remote_index == local_len {
             self.blockchain.add_block_from_network(block);
-        }
-        // if it is not the next block it copy all the chain
-        else if remote_index > local_len {
+        } else if remote_index > local_len {
             let remote_chain = from_node.blockchain.clone();
             self.blockchain.replace_chain_if_longer(&remote_chain);
         }
+        // se for menor, ignora
     }
 
     pub fn add_peer(&mut self, peer_id: NodeId) {
@@ -86,14 +121,20 @@ impl Node {
     pub fn remove_peer(&mut self, peer_id: NodeId) {
         self.peers.retain(|&id| id != peer_id);
     }
-    
-    
 }
 
+/// Quando o `Node` sai de escopo, liberamos o ID no registro
+impl Drop for Node {
+    fn drop(&mut self) {
+        unregister_id(self.node_id);
+    }
+}
+
+// NetworkMessage se precisar
 #[derive(Debug)]
 pub enum NetworkMessage {
     TransactionMessage(Transaction),
-    // futuramente: BlockMessage(Block), etc.
+    // ...
 }
 
 #[cfg(test)]
@@ -101,14 +142,16 @@ mod tests {
     use super::*;
     use crate::wallet::transaction::Transaction;
     use crate::wallet::wallet::generate_wallet;
+    use std::sync::{Arc, Mutex};
 
+    // Teste 1: usa ID=10 e ID=11
     #[test]
     fn test_send_transaction_to_mempool() {
-        let mut node1 = Node::new(1);
-        let mut node2 = Node::new(2);
+        let mut node1 = Node::new(10);
+        let mut node2 = Node::new(11);
 
-        node1.peers = vec![2];
-        node2.peers = vec![1];
+        node1.peers = vec![11];
+        node2.peers = vec![10];
 
         let wallet1 = generate_wallet();
 
@@ -128,9 +171,10 @@ mod tests {
         assert_eq!(node1.blockchain.pending_transactions[0], tx1.clone());
     }
 
+    // Teste 2: usa ID=12
     #[test]
     fn test_mining_locally_includes_transactions() {
-        let mut node1 = Node::new(1);
+        let mut node1 = Node::new(12);
 
         let wallet1 = generate_wallet();
         let wallet2 = generate_wallet();
@@ -163,17 +207,19 @@ mod tests {
         assert!(last_block.transactions.contains(&tx2));
     }
 
-    #[test]
-    #[test]
+    // Teste 3: usa IDs=20,21,22
+        #[test]
     fn test_broadcast_block() {
         use std::sync::{Arc, Mutex};
-    
-        // Crie nó0, nó1, nó2
+        use crate::wallet::transaction::Transaction; // se ainda não estiver importado
+        use crate::wallet::wallet::generate_wallet;   // se ainda não estiver importado
+
+        // Cria nó0, nó1, nó2 com IDs 0, 1 e 2
         let node0 = Arc::new(Mutex::new(Node::new(0)));
         let node1 = Arc::new(Mutex::new(Node::new(1)));
         let node2 = Arc::new(Mutex::new(Node::new(2)));
-    
-        // Ajuste peers coerentemente:
+
+        // Ajusta peers coerentemente:
         // node0 -> peers = [1,2]
         {
             let mut n0 = node0.lock().unwrap();
@@ -189,33 +235,37 @@ mod tests {
             let mut n2 = node2.lock().unwrap();
             n2.peers = vec![0, 1];
         }
-    
+
         // Gera carteiras e transações
         let wallet1 = generate_wallet();
         let wallet2 = generate_wallet();
+
         let tx1 = Transaction::new_signed(&wallet1, wallet2.address.clone(), 50)
             .expect("Failed to create tx1");
         let tx2 = Transaction::new_signed(&wallet1, wallet2.address.clone(), 200)
             .expect("Failed to create tx2");
-    
+
         // node0 recebe essas transações e minera um bloco
         {
             let mut n0 = node0.lock().unwrap();
             n0.receive_transaction(tx1.clone());
             n0.receive_transaction(tx2.clone());
-    
+
             n0.blockchain.add_block();
-            assert_eq!(n0.blockchain.blocks.len(), 2, "Node0 tem gênese + 1 bloco");
+            assert_eq!(
+                n0.blockchain.blocks.len(), 
+                2,
+                "Node0 deveria ter bloco gênese + 1 bloco minerado"
+            );
         }
-    
-        // Pega o último bloco minerado
+
+        // Pega o último bloco minerado em node0
         let last_block = {
             let n0 = node0.lock().unwrap();
             n0.blockchain.blocks.last().unwrap().clone()
         };
-    
+
         // node0 faz broadcast do bloco para [node0, node1, node2]
-        // (passamos todos, pois node0 vai acessar all_nodes[1], all_nodes[2])
         {
             let mut n0 = node0.lock().unwrap();
             n0.broadcast_block(
@@ -223,34 +273,42 @@ mod tests {
                 &[node0.clone(), node1.clone(), node2.clone()]
             );
         }
-    
-        // Verifica se node1 recebeu
+
+        // Verifica se node1 recebeu o bloco
         {
             let n1 = node1.lock().unwrap();
-            assert_eq!(n1.blockchain.blocks.len(), 2, "Node1 recebeu broadcast");
+            assert_eq!(
+                n1.blockchain.blocks.len(), 
+                2, 
+                "Node1 deve ter recebido o bloco via broadcast"
+            );
             let last_block_node1 = n1.blockchain.blocks.last().unwrap();
             assert_eq!(last_block_node1.transactions.len(), 2);
             assert!(last_block_node1.transactions.contains(&tx1));
             assert!(last_block_node1.transactions.contains(&tx2));
         }
-    
-        // Verifica se node2 recebeu
+
+        // Verifica se node2 recebeu o bloco
         {
             let n2 = node2.lock().unwrap();
-            assert_eq!(n2.blockchain.blocks.len(), 2, "Node2 recebeu broadcast");
+            assert_eq!(
+                n2.blockchain.blocks.len(),
+                2,
+                "Node2 deve ter recebido o bloco via broadcast"
+            );
             let last_block_node2 = n2.blockchain.blocks.last().unwrap();
             assert_eq!(last_block_node2.transactions.len(), 2);
             assert!(last_block_node2.transactions.contains(&tx1));
             assert!(last_block_node2.transactions.contains(&tx2));
         }
     }
-    
 
 
+    // Teste 4: IDs=30 e 31
     #[test]
     fn replace_longer_chain() {
-        let mut node_short = Node::new(1);
-        let mut node_long = Node::new(2);
+        let mut node_short = Node::new(30);
+        let mut node_long = Node::new(31);
 
         assert_eq!(node_short.blockchain.blocks.len(), 1);
 
@@ -285,9 +343,10 @@ mod tests {
         assert_eq!(node_short.blockchain.blocks, node_long.blockchain.blocks);
     }
 
+    // Teste 5: ID=40
     #[test]
     fn test_fork_same_index_different_hash() {
-        let mut node_a = Node::new(1);
+        let mut node_a = Node::new(40);
 
         node_a.blockchain.add_block();
         assert_eq!(node_a.blockchain.blocks.len(), 2);
@@ -308,9 +367,10 @@ mod tests {
         // (Você poderia testar se node_a.receive_block(block_fork, ...) faz algo especial.)
     }
 
+    // Teste 6: ID=50
     #[test]
     fn test_blockchain_integrity_is_valid() {
-        let mut node = Node::new(1);
+        let mut node = Node::new(50);
 
         let wallet1 = generate_wallet();
         let wallet2 = generate_wallet();

@@ -38,6 +38,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "hex",
+ "once_cell",
  "rand",
  "secp256k1",
  "serde",
