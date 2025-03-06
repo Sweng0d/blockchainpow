@@ -20,7 +20,6 @@ pub struct Node {
 #[derive(Debug)]
 pub enum NodeError {
     DuplicateId(NodeId),
-    // outros erros se quiser
 }
 
 impl fmt::Display for NodeError {
@@ -407,5 +406,37 @@ mod tests {
             !node.blockchain.is_valid(),
             "Alterar dados de um bloco deve invalidar toda a chain"
         );
+    }
+    
+    fn test_add_and_remove_peer() {
+        // Cria um Node com ID 0 (pode ser qualquer ID que você queira)
+        let mut node = Node::new(0);
+    
+        // No início, peers deve estar vazio
+        assert!(node.peers.is_empty());
+    
+        // Adiciona peer 1
+        node.add_peer(1);
+        assert_eq!(node.peers, vec![1], "Depois de add_peer(1), peers deve ter [1]");
+    
+        // Tenta adicionar peer 1 de novo (não deve duplicar)
+        node.add_peer(1);
+        assert_eq!(node.peers, vec![1], "Não deve ter duplicado o peer 1");
+    
+        // Adiciona peer 2
+        node.add_peer(2);
+        assert_eq!(node.peers, vec![1, 2], "Agora deve ter [1, 2]");
+    
+        // Remove peer 1
+        node.remove_peer(1);
+        assert_eq!(node.peers, vec![2], "Depois de remover peer 1, deve restar [2]");
+    
+        // Tenta remover peer 1 novamente, mas ele já não existe
+        node.remove_peer(1);
+        assert_eq!(node.peers, vec![2], "Remover peer que não existe não muda nada");
+    
+        // Remove peer 2
+        node.remove_peer(2);
+        assert!(node.peers.is_empty(), "Lista de peers deve ficar vazia novamente");
     }
 }
