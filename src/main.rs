@@ -4,24 +4,35 @@ mod wallet;
 use crate::blockchain::node::Node;
 use crate::wallet::wallet::generate_wallet;
 use crate::wallet::transaction::Transaction;
-use serde_json::json;
+
+use std::sync::{Arc, Mutex};
 
 fn main() {
     println!("=== Simulação de múltiplos nós com Proof of Work ===");
 
-    // Crie um vetor de nós:
-    let mut nodes = vec![
-        Node::new(1),
-        Node::new(2),
-        Node::new(3),
+    // 1) Crie três nós protegidos por Arc<Mutex<>> e coloque-os num Vec
+    let nodes: Vec<Arc<Mutex<Node>>> = vec![
+        Arc::new(Mutex::new(Node::new(1))),
+        Arc::new(Mutex::new(Node::new(2))),
+        Arc::new(Mutex::new(Node::new(3))),
     ];
 
-    // Configure peers
-    nodes[0].peers = vec![2, 3];
-    nodes[1].peers = vec![1, 3];
-    nodes[2].peers = vec![1, 2];
+    // 2) Configure peers
+    //    Cada nó tem peers = IDs dos outros (por exemplo, node1 -> 2,3 etc.)
+    {
+        let mut n0 = nodes[0].lock().unwrap();
+        n0.peers = vec![1, 2]; // ou [2, 3] se preferir
+    }
+    {
+        let mut n1 = nodes[1].lock().unwrap();
+        n1.peers = vec![0, 2]; // ou [1, 3]
+    }
+    {
+        let mut n2 = nodes[2].lock().unwrap();
+        n2.peers = vec![0, 1]; // ou [1, 2]
+    }
 
-    // 2) Gera três carteiras
+    // 3) Gera três carteiras
     let wallet1 = generate_wallet();
     let wallet2 = generate_wallet();
     let wallet3 = generate_wallet();
@@ -30,64 +41,77 @@ fn main() {
     println!("Carteira2 address: {}", wallet2.address);
     println!("Carteira3 address: {}", wallet3.address);
 
-    // 3) node1 (nodes[0]) cria transação e envia a node2 (nodes[1])
+    // 4) node1 cria transação e envia a node2
     let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 50)
         .expect("Failed to create the transaction");
 
-    // --- BLOCO para evitar conflito do borrow checker ---
     {
-        use std::mem;
-        // Tira temporariamente node1 do vetor
-        let mut temp_node0 = mem::replace(&mut nodes[0], Node::new(999));
+        // Trave node1 e node2 para usar &mut Node
+        let mut node1_lock = nodes[0].lock().unwrap();
+        let mut node2_lock = nodes[1].lock().unwrap();
 
-        // Agora chamamos normalmente:
-        temp_node0.send_transaction(&mut nodes[1], Ok(tx1));
-
-        // Recoloca node1 no lugar
-        nodes[0] = temp_node0;
+        // Chame o método send_transaction normalmente
+        // (Assumindo que send_transaction é algo como fn send_transaction(&mut self, to: &mut Node, ...))
+        node1_lock.send_transaction(&mut *node2_lock, Ok(tx1));
     }
 
-    // Agora node2 tem transação pendente
-    println!("\nNode2 vai minerar bloco com transações pendentes...");
-    nodes[1].blockchain.add_block();
-    // node2 agora tem 2 blocos (gênese + bloco recém-minerado)
-
-    // 4) node2 broadcasta esse bloco a node1
-    let last_block = nodes[1].blockchain.blocks.last().unwrap().clone();
-    println!("Node2 broadcasta bloco de index {} para node1", last_block.index);
-
-    // --- BLOCO para evitar conflito no broadcast_block ---
+    // 5) node2 minera bloco
     {
-        use std::mem;
-        // Tira temporariamente node2 do vetor
-        let mut temp_node1 = mem::replace(&mut nodes[1], Node::new(999));
-
-        // Cria um vetor de referências mutáveis para todos os nós
-        let mut node_refs = nodes.iter_mut().collect::<Vec<&mut Node>>();
-
-        // Agora chamamos broadcast_block passando o slice de &mut Node
-        temp_node1.broadcast_block(last_block, &temp_node1, &mut node_refs[..]);
-
-        // Recoloca node2 no lugar
-        nodes[1] = temp_node1;
+        let mut node2_lock = nodes[1].lock().unwrap();
+        println!("\nNode2 vai minerar bloco com transações pendentes...");
+        node2_lock.blockchain.add_block();
+        // Agora node2 tem 2 blocos (gênese + bloco recém-minerado)
     }
 
-    // 5) Após o broadcast, renomeamos localmente para imprimir ou analisar
-    let node1 = &nodes[0];
-    let node2 = &nodes[1];
+    // 6) Pegue o último bloco minerado para broadcast
+    let last_block = {
+        let node2_lock = nodes[1].lock().unwrap();
+        node2_lock.blockchain.blocks.last().unwrap().clone()
+    };
+    println!(
+        "Node2 broadcasta bloco de index {} para node1",
+        last_block.index
+    );
 
-    println!("\nVerificando se node1 e node2 têm blockchains válidas:");
-    println!("Node1 blockchain is valid? {}", node1.blockchain.is_valid());
-    println!("Node2 blockchain is valid? {}", node2.blockchain.is_valid());
+    // 7) Broadcast do bloco
+    {
+        let mut node2_lock = nodes[1].lock().unwrap();
 
-    // 6) Exibir blockchains em JSON
-    let json_node1 = serde_json::to_string_pretty(&node1.blockchain)
-        .expect("Fail to serialize node1 chain");
-    let json_node2 = serde_json::to_string_pretty(&node2.blockchain)
-        .expect("Fail to serialize node2 chain");
+        // Precisamos passar a lista de nós para broadcast_block;
+        // Então a função broadcast_block deve aceitar algo como
+        // broadcast_block(&mut self, block: Block, all_nodes: &[Arc<Mutex<Node>>])
+        node2_lock.broadcast_block(last_block, &nodes);
+    }
 
-    println!("\n=== Node1 Blockchain ===\n{}", json_node1);
-    println!("\n=== Node2 Blockchain ===\n{}", json_node2);
+    // 8) Verificar a validade da blockchain do node1 e node2
+    {
+        let node1_lock = nodes[0].lock().unwrap();
+        println!(
+            "\nNode1 blockchain is valid? {}",
+            node1_lock.blockchain.is_valid()
+        );
+    }
+    {
+        let node2_lock = nodes[1].lock().unwrap();
+        println!(
+            "Node2 blockchain is valid? {}",
+            node2_lock.blockchain.is_valid()
+        );
+    }
+
+    // 9) Exibir blockchains em JSON
+    {
+        let node1_lock = nodes[0].lock().unwrap();
+        let json_node1 = serde_json::to_string_pretty(&node1_lock.blockchain)
+            .expect("Fail to serialize node1 chain");
+        println!("\n=== Node1 Blockchain ===\n{}", json_node1);
+    }
+    {
+        let node2_lock = nodes[1].lock().unwrap();
+        let json_node2 = serde_json::to_string_pretty(&node2_lock.blockchain)
+            .expect("Fail to serialize node2 chain");
+        println!("\n=== Node2 Blockchain ===\n{}", json_node2);
+    }
 
     println!("\n=== Fim da simulação ===");
 }
