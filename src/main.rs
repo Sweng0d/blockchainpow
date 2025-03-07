@@ -45,6 +45,9 @@ fn main() {
     let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 50)
         .expect("Failed to create the transaction");
 
+    let tx_hash = tx1.tx_hash();
+    println!("tx1 hash is {}", tx_hash);
+
     {
         // Trave node1 e node2 para usar &mut Node
         let mut node1_lock = nodes[0].lock().unwrap();

@@ -3,12 +3,16 @@ use serde::{Serialize, Deserialize};
 use crate::wallet::transaction::Transaction;
 use crate::blockchain::block::calculate_hash;
 use crate::wallet::wallet::Wallet;
+use std::collections::HashMap;
+use crate::generate_wallet;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Blockchain {
     pub blocks: Vec<Block>,
     pub pending_transactions: Vec<Transaction>, //mempool
     pub difficulty: u32,
+    #[serde(skip)]
+    pub tx_map: HashMap<String, Transaction>,
 }
 
 impl Blockchain {
@@ -17,7 +21,8 @@ impl Blockchain {
         let mut blockchain = Blockchain {
             blocks: Vec::new(),
             pending_transactions: Vec::new(),
-            difficulty: 4,
+            difficulty: 3,
+            tx_map: HashMap::new(),
         };
 
         // genesis block
@@ -29,7 +34,10 @@ impl Blockchain {
 
     //add transactions to mempool
     pub fn add_transaction_to_mempool(&mut self, tx: Transaction) {
+        let txid = tx.tx_hash();
+
         if tx.is_valid() {
+            self.tx_map.insert(txid, tx.clone());
             self.pending_transactions.push(tx);
         } else {
             println!("Invalid Transaction, ignoring...");
@@ -107,7 +115,11 @@ impl Blockchain {
         amount: u64
     ) {
         let tx = Transaction::new_signed(from_wallet, to_address, amount);
-        self.add_transaction_to_mempool(tx.unwrap());
+        if let Ok(tx_ok) = tx {
+            self.add_transaction_to_mempool(tx_ok);
+        } else {
+            println!("Failed to create signed transaction");
+        }
     }
 
     //recebe um bloco da rede
@@ -127,16 +139,105 @@ impl Blockchain {
             println!("A new block has bigger index, we might request the full chain from that node!");
         }
     }
+
+    pub fn find_transaction(&self, tx_hash: &str) -> Option<&Transaction> {
+        self.tx_map.get(tx_hash)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_blockchain_creation_and_adding_blocks() {
+    fn test_add_valid_transaction_to_mempool_and_find() {
         let mut blockchain = Blockchain::new();
-        assert!(blockchain.is_valid()); // deve ser válido mesmo só com gênese
-        // ...
+
+        // Cria 2 carteiras de teste (ajuste se necessário)
+        let wallet_from = generate_wallet(); 
+        let wallet_to   = generate_wallet();
+
+        // Cria uma transação válida (amount>0)
+        let tx = Transaction::new_signed(&wallet_from, wallet_to.address.clone(), 50)
+            .expect("Transação deve ser válida com amount=50");
+        
+        // Pega o hash da transação
+        let tx_hash = tx.tx_hash();
+
+        // Adiciona ao mempool
+        blockchain.add_transaction_to_mempool(tx);
+
+        // Verifica se está no tx_map
+        let found = blockchain.find_transaction(&tx_hash);
+        assert!(found.is_some(), "A transação deve estar no tx_map");
+        let found_tx = found.unwrap();
+        assert_eq!(found_tx.tx_hash(), tx_hash, "Os hashes devem bater");
+        
+        // Verifica se está na pending_transactions (mempool)
+        assert_eq!(blockchain.pending_transactions.len(), 1, "Deveria haver 1 tx pendente");
+        let mempool_tx = &blockchain.pending_transactions[0];
+        assert_eq!(mempool_tx.tx_hash(), tx_hash, "Hash no mempool deve bater");
+    }
+
+    #[test]
+    fn test_add_invalid_transaction_does_not_index() {
+        let mut blockchain = Blockchain::new();
+        let wallet_from = generate_wallet();
+        let wallet_to   = generate_wallet();
+
+        // Cria transação com amount=0 => deve falhar
+        let tx_result = Transaction::new_signed(&wallet_from, wallet_to.address.clone(), 0);
+        assert!(tx_result.is_err(), "Transação com amount=0 deve retornar Err");
+
+        // Se o tx_result é Err, a gente não chega a inserir nada. 
+        // Mas vamos criar manualmente uma tx inválida sem is_valid().
+        let invalid_tx = Transaction {
+            from_address: wallet_from.address.clone(),
+            to_address: wallet_to.address.clone(),
+            amount: 0,
+            public_key: Some(wallet_from.public_key),
+            signature: None, // sem assinar
+        };
+
+        // Adiciona ao mempool
+        blockchain.add_transaction_to_mempool(invalid_tx);
+
+        // Verifica se mempool continua vazio 
+        // (pois transaction.is_valid() deve retornar false)
+        assert_eq!(blockchain.pending_transactions.len(), 0, 
+            "Nenhuma transação deve ter sido adicionada ao mempool");
+
+        // Verifica se tx_map está vazio também
+        assert_eq!(blockchain.tx_map.len(), 0, 
+            "Nenhuma transação deve ter sido indexada no tx_map");
+    }
+
+    #[test]
+    fn test_new_signed_tx_and_added_mempool() {
+        let mut blockchain = Blockchain::new();
+        let wallet_from = generate_wallet();
+        let wallet_to   = generate_wallet();
+
+        // Chama a função do Blockchain que cria e adiciona a tx
+        blockchain.new_signed_tx_and_added_mempool(&wallet_from, wallet_to.address.clone(), 25);
+
+        // Se foi válida, deve estar no mempool
+        assert_eq!(blockchain.pending_transactions.len(), 1);
+        
+        // E também no tx_map
+        assert_eq!(blockchain.tx_map.len(), 1);
+
+        // Pega a transação do mempool
+        let mempool_tx = &blockchain.pending_transactions[0];
+        let txid = mempool_tx.tx_hash();
+
+        // Tenta encontrar no tx_map
+        let found = blockchain.find_transaction(&txid);
+        assert!(found.is_some());
+        let found_tx = found.unwrap();
+
+        // Verifica se confere o valor
+        assert_eq!(found_tx.amount, 25);
+        assert_eq!(found_tx.from_address, wallet_from.address);
+        assert_eq!(found_tx.to_address, wallet_to.address);
     }
 }

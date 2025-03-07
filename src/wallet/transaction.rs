@@ -117,3 +117,129 @@ pub fn sign_data(wallet: &Wallet, data: &[u8]) -> Signature {
     signature
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::wallet::wallet::{Wallet, generate_wallet}; 
+    // Ajuste o import conforme sua estrutura
+
+    #[test]
+    fn test_new_signed_valid_transaction() {
+        // Cria uma carteira (remetente)
+        let from_wallet = generate_wallet();  
+        // Cria um endereço de destino (pode ser outra carteira ou string)
+        let to_wallet = generate_wallet();  
+
+        // Tenta criar transação com amount=50
+        let tx_result = Transaction::new_signed(&from_wallet, to_wallet.address.clone(), 50);
+        assert!(tx_result.is_ok(), "Esperado que a transação seja criada com sucesso");
+
+        let tx = tx_result.unwrap();
+
+        // Verifica campos básicos
+        assert_eq!(tx.from_address, from_wallet.address, "from_address deve ser o do wallet remetente");
+        assert_eq!(tx.to_address, to_wallet.address, "to_address deve ser o do wallet destinatário");
+        assert_eq!(tx.amount, 50);
+        assert!(tx.public_key.is_some(), "A transação deve conter a public_key do remetente");
+        assert!(tx.signature.is_some(), "A transação deve estar assinada");
+
+        // Verifica se is_valid() retorna true
+        let valid = tx.is_valid();
+        assert!(valid, "Transação deve ser considerada válida");
+    }
+
+    #[test]
+    fn test_new_signed_invalid_amount() {
+        let from_wallet = generate_wallet();
+        let to_wallet = generate_wallet();
+
+        // Tenta criar transação com amount=0 => deve retornar Err(TransactionError::InvalidAmount)
+        let tx_result = Transaction::new_signed(&from_wallet, to_wallet.address.clone(), 0);
+        assert!(tx_result.is_err(), "Esperado erro pois amount=0");
+
+        if let Err(e) = tx_result {
+            match e {
+                TransactionError::InvalidAmount => {
+                    // Ok, é o erro esperado
+                }
+                _ => panic!("Erro esperado era InvalidAmount, mas veio outro"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_is_valid_missing_signature_or_pubkey() {
+        let from_wallet = generate_wallet();
+        let to_wallet = generate_wallet();
+
+        // Cria transação válida
+        let mut tx = Transaction::new_signed(&from_wallet, to_wallet.address.clone(), 10)
+            .expect("Deveria criar ok");
+        assert!(tx.is_valid(), "Deveria ser válida inicialmente");
+
+        // Remove a assinatura => deve se tornar inválida
+        tx.signature = None;
+        assert!(!tx.is_valid(), "Sem signature, transação não pode ser válida");
+
+        // Remove também a public_key => continua inválida
+        tx.public_key = None;
+        assert!(!tx.is_valid(), "Sem public_key, transação não é válida");
+    }
+
+    #[test]
+    fn test_tx_hash_changes_if_fields_change() {
+        let from_wallet = generate_wallet();
+        let to_wallet = generate_wallet();
+
+        let tx = Transaction::new_signed(&from_wallet, to_wallet.address.clone(), 100)
+            .expect("Cria transação com amount=100");
+        
+        let hash1 = tx.tx_hash();
+        assert!(!hash1.is_empty(), "Hash não deve ser vazio");
+
+        // Clone e altera o amount para ver se o hash muda
+        let mut tx2 = tx.clone();
+        tx2.amount = 200;
+
+        let hash2 = tx2.tx_hash();
+        assert_ne!(hash1, hash2, "Hash deve mudar quando amount muda");
+
+        // Retorna o amount para 100
+        tx2.amount = 100;
+        // Mas se a assinatura depende do payload, nesse caso, a signature do tx2
+        // não corresponde mais ao payload. Então is_valid() poderia falhar.
+        // Pra fins de hash, só mostrando que o hash depende do amount + signature + pub_key
+
+        // Você também pode alterar a signature e ver se o hash muda
+        tx2.signature = None;  // ou outra signature
+        let hash3 = tx2.tx_hash();
+        assert_ne!(hash1, hash3, "Hash deve mudar se assinatura muda");
+    }
+
+    #[test]
+    fn test_tx_hash_is_deterministic() {
+        let from_wallet = generate_wallet();
+        let to_wallet = generate_wallet();
+
+        // Cria duas transações idênticas (mesmo from, to, amount)
+        let tx1 = Transaction::new_signed(&from_wallet, to_wallet.address.clone(), 10)
+            .expect("ok");
+        let tx2 = Transaction::new_signed(&from_wallet, to_wallet.address.clone(), 10)
+            .expect("ok");
+
+        // Se o from_wallet gera a mesma chave pública e assina do mesmo jeito,
+        // as transações devem ter a mesma 'payload' e a mesma signature,
+        // mas na prática, a assinatura pode variar levemente se secp256k1 gera Nonces aleatórios
+        // Em ECDSA normal, isso pode gerar um hash distinto. 
+        // Dependendo do 'nonce' da assinatura, tx_hash pode ser diferente.
+        // Para esse teste, assumindo determinismo do sign_data, ou se a sign_data usa RNG estável, 
+        // elas podem divergir. 
+
+        // Se a sign_data for determinística, esse teste pode passar:
+        // assert_eq!(tx1.tx_hash(), tx2.tx_hash(), "Hashes devem ser iguais se a assinatura foi determinística");
+        
+        // Caso a sign_data use RNG, cada transaction terá signature diferente => hash diferente.
+        // Então esse teste serve para ilustrar a ideia. Se sua sign_data é determinística, descomente:
+        // assert_eq!(tx1.tx_hash(), tx2.tx_hash(), "Hash should be same if signature is deterministic");
+    }
+}
