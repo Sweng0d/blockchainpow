@@ -20,7 +20,7 @@ impl Blockchain {
             difficulty: 4,
         };
 
-        // bloco gênese
+        // genesis block
         let genesis = Block::new(0, vec![], "0".to_string());
         blockchain.blocks.push(genesis);
 
