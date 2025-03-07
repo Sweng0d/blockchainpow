@@ -8,6 +8,7 @@ pub struct Wallet {
     pub address: String,
 }
 
+#[allow(dead_code)]
 impl Wallet {
     pub fn print_info(&self) {
         println!("Wallet address: {}", self.address);

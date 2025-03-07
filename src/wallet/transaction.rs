@@ -62,7 +62,7 @@ impl Transaction {
         hasher.update(data_string.as_bytes());
         let result = hasher.finalize();
 
-        let message = Message::from_slice(&result).expect("Hash deve ter 32 bytes");
+        let message = Message::from_digest_slice(&result).expect("Hash deve ter 32 bytes");
 
         let secp = Secp256k1::new();
         let sig = self.signature.as_ref().unwrap();
@@ -109,7 +109,8 @@ pub fn sign_data(wallet: &Wallet, data: &[u8]) -> Signature {
 
     let result = hasher.finalize();
 
-    let message = Message::from_slice(&result).expect("Hash deve ter 32 bytes");
+    let message = Message::from_digest_slice(&result)
+    .expect("Hash deve ter 32 bytes");
 
     let secp = Secp256k1::new();
     let signature = secp.sign_ecdsa(&message, &wallet.secret_key);
@@ -120,7 +121,7 @@ pub fn sign_data(wallet: &Wallet, data: &[u8]) -> Signature {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wallet::wallet::{Wallet, generate_wallet}; 
+    use crate::wallet::wallet::{generate_wallet}; 
     // Ajuste o import conforme sua estrutura
 
     #[test]
@@ -162,7 +163,6 @@ mod tests {
                 TransactionError::InvalidAmount => {
                     // Ok, é o erro esperado
                 }
-                _ => panic!("Erro esperado era InvalidAmount, mas veio outro"),
             }
         }
     }

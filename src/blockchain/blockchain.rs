@@ -4,7 +4,6 @@ use crate::wallet::transaction::Transaction;
 use crate::blockchain::block::calculate_hash;
 use crate::wallet::wallet::Wallet;
 use std::collections::HashMap;
-use crate::generate_wallet;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Blockchain {
@@ -127,6 +126,7 @@ impl Blockchain {
     }
 
     //cria uma transação assinada e põe no mempool
+    #[allow(dead_code)]
     pub fn new_signed_tx_and_added_mempool(
         &mut self,
         from_wallet: &Wallet,
@@ -159,6 +159,7 @@ impl Blockchain {
         }
     }
 
+    #[allow(dead_code)]
     pub fn find_transaction(&self, tx_hash: &str) -> Option<&Transaction> {
         self.tx_map.get(tx_hash)
     }
@@ -167,7 +168,9 @@ impl Blockchain {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::generate_wallet;
 
+    #[allow(dead_code)]
     fn test_add_valid_transaction_to_mempool_and_find() {
         let mut blockchain = Blockchain::new();
 
