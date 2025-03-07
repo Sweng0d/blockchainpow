@@ -234,12 +234,9 @@ mod tests {
         // Dependendo do 'nonce' da assinatura, tx_hash pode ser diferente.
         // Para esse teste, assumindo determinismo do sign_data, ou se a sign_data usa RNG estável, 
         // elas podem divergir. 
-
-        // Se a sign_data for determinística, esse teste pode passar:
-        // assert_eq!(tx1.tx_hash(), tx2.tx_hash(), "Hashes devem ser iguais se a assinatura foi determinística");
         
         // Caso a sign_data use RNG, cada transaction terá signature diferente => hash diferente.
         // Então esse teste serve para ilustrar a ideia. Se sua sign_data é determinística, descomente:
-        // assert_eq!(tx1.tx_hash(), tx2.tx_hash(), "Hash should be same if signature is deterministic");
+        assert_eq!(tx1.tx_hash(), tx2.tx_hash(), "Hash should be same if signature is deterministic");
     }
 }

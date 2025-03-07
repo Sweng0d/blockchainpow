@@ -92,17 +92,106 @@ pub fn calculate_hash(index: u64, timestamp: i64, transactions: &Vec<Transaction
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+    use crate::wallet::transaction::Transaction; // se precisar
+    // Se precisar criar transações de teste, importe também a wallet ou algo do tipo
+
     #[test]
     fn test_block_creation() {
         let block = Block::new(0, vec![], "0".to_string());
-  
-        assert_eq!(block.index, 0);
-        assert_eq!(block.transactions.len(), 0);
+
+        assert_eq!(block.index, 0, "Index inicial deve ser 0");
+        assert_eq!(block.transactions.len(), 0, "Sem transações no construtor");
         assert_eq!(block.previous_hash, "0");
-        assert_eq!(block.nonce, 0, "nonce should be 0 by default in constructor");
-        assert_ne!(block.timestamp, 0, "timestamp should not be zero");
-        assert!(!block.hash.is_empty(), "hash must not be empty");
-  
+        assert_eq!(block.nonce, 0, "nonce deve ser 0 por default");
+        assert_ne!(block.timestamp, 0, "timestamp não deve ser zero");
+        assert!(!block.hash.is_empty(), "hash deve ser preenchido");
+    }
+
+    #[test]
+    fn test_mine_block_increases_nonce_and_validates() {
+        let mut block = Block::new(1, vec![], "hash-do-bloco-anterior".to_string());
+        let difficulty = 2;
+
+        // O hash inicial não necessariamente começa com "00"
+        assert!(!block.hash.starts_with("00"));
+
+        // Realiza a mineração
+        block.mine_block(difficulty);
+
+        // Verifica se agora começa com "00"
+        let prefix = "0".repeat(difficulty as usize);
+        assert!(block.hash.starts_with(&prefix), 
+            "Hash deve começar com {} zeros após minerar", difficulty);
+
+        // O nonce deve ter aumentado (não ser zero)
+        assert!(block.nonce > 0, "nonce deve ser incrementado durante a mineração");
+
+        // is_valid(difficulty) deve retornar true
+        assert!(block.is_valid(difficulty), "Bloco deve ser válido após minerar com essa dificuldade");
+    }
+
+    #[test]
+    fn test_is_valid_after_tampering_nonce() {
+        let mut block = Block::new(2, vec![], "prev-hash".to_string());
+        let difficulty = 1;
+        block.mine_block(difficulty);
+
+        // Confirma que bloco está válido
+        assert!(block.is_valid(difficulty));
+
+        // Tenta adulterar o nonce
+        block.nonce += 1;
+
+        // Agora deve falhar na verificação
+        assert!(!block.is_valid(difficulty), 
+            "Ao modificar nonce, o bloco deve ficar inválido");
+    }
+
+    #[test]
+    fn test_is_valid_after_tampering_transactions() {
+        // Vamos criar um bloco com 2 transações de teste
+        let tx1 = Transaction {
+            from_address: "Alice".into(),
+            to_address: "Bob".into(),
+            amount: 50,
+            public_key: None,
+            signature: None,
+        };
+        let tx2 = Transaction {
+            from_address: "Carol".into(),
+            to_address: "Dave".into(),
+            amount: 100,
+            public_key: None,
+            signature: None,
+        };
+        let mut block = Block::new(3, vec![tx1.clone(), tx2.clone()], "prev-hash".to_string());
+
+        let difficulty = 1;
+        block.mine_block(difficulty);
+
+        // Bloco deve ser válido
+        assert!(block.is_valid(difficulty));
+
+        // Agora adulteramos a primeira transação (ex.: amount = 999)
+        block.transactions[0].amount = 999;
+
+        // Com essa adulteração, o hash guardado em 'block.hash' não corresponde mais. 
+        // is_valid deve retornar falso
+        assert!(!block.is_valid(difficulty), 
+            "Modificar as transações deve invalidar o bloco");
+    }
+
+    #[test]
+    fn test_is_valid_after_tampering_previous_hash() {
+        let mut block = Block::new(4, vec![], "prev-hash-abc".to_string());
+        let difficulty = 1;
+        block.mine_block(difficulty);
+
+        assert!(block.is_valid(difficulty));
+
+        // Altera o previous_hash
+        block.previous_hash = "tampered-hash".to_string();
+        assert!(!block.is_valid(difficulty), 
+            "Modificar o previous_hash deve invalidar o bloco");
     }
 }

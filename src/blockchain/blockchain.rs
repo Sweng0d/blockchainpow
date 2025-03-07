@@ -47,21 +47,40 @@ impl Blockchain {
     //add block to the blockchain. It will calculate_hash and mineblock, and afterwards add it to the blockchain.
     pub fn add_block(&mut self) {
         let index = self.blocks.len() as u64;
-        
+    
         let previous_hash = if let Some(last_block) = self.blocks.last() {
             &last_block.hash
         } else {
             "0"
         };
-
+    
+        // Clona as transações pendentes
         let txs = self.pending_transactions.clone();
+        // Limpa a mempool
         self.pending_transactions.clear();
-
+    
+        // Cria novo bloco
         let mut new_block = Block::new(index, txs, previous_hash.to_string());
+    
+        // Faz a mineração
         new_block.mine_block(self.difficulty);
-
+    
+        // Agora checamos se está realmente válido
+        if !new_block.is_valid(self.difficulty) {
+            println!("Bloco inválido (hash inconsistente ou proof-of-work falhou). Não adicionando!");
+            return;
+        }
+    
+        // Se quiser, também garantir que new_block.previous_hash == blocks.last().hash, podemos checar:
+        if new_block.previous_hash != self.blocks.last().unwrap().hash {
+            println!("Bloco inválido (previous_hash difere do hash do último bloco). Não adicionando!");
+            return;
+        }
+    
+        // Se tudo certo, empurra na cadeia
         self.blocks.push(new_block);
     }
+    
 
     //check if entire blockchain is valid
     pub fn is_valid(&self) -> bool {
