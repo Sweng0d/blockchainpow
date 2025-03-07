@@ -70,6 +70,36 @@ impl Transaction {
 
         secp.verify_ecdsa(&message, sig, pub_key).is_ok()
     }
+
+    pub fn tx_hash(&self) -> String {
+
+        let mut data = format!("{}|{}|{}", 
+            self.from_address, 
+            self.to_address, 
+            self.amount
+        );
+
+        if let Some(pub_key) = &self.public_key {
+            // Converte para bytes comprimidos ou não
+            // Normalmente, `pub_key.serialize()` dá 33 bytes (comprimido) ou 65 (descomprimido)
+            let pub_key_bytes = pub_key.serialize();
+            data.push_str(&hex::encode(pub_key_bytes));
+        }
+
+        if let Some(sig) = &self.signature {
+            // ECDSA compact: 64 bytes. Some crates usam 72 etc. 
+            // Em secp256k1, `sig.serialize_compact()` dá 64 bytes
+            let sig_bytes = sig.serialize_compact();
+            data.push_str(&hex::encode(sig_bytes));
+        }
+
+        let mut hasher = Sha256::new();
+        hasher.update(data.as_bytes());
+        let result = hasher.finalize();
+
+        hex::encode(result)
+    }  
+
 }
 
 
