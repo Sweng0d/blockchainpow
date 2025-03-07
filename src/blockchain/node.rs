@@ -111,12 +111,14 @@ impl Node {
         // se for menor, ignora (é um fork mais curto)
     }
 
+    #[allow(dead_code)]
     pub fn add_peer(&mut self, peer_id: NodeId) {
         if !self.peers.contains(&peer_id) {
             self.peers.push(peer_id);
         }
     }
 
+    #[allow(dead_code)]
     pub fn remove_peer(&mut self, peer_id: NodeId) {
         self.peers.retain(|&id| id != peer_id);
     }
