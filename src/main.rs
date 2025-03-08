@@ -1,28 +1,28 @@
 mod blockchain;
 mod wallet;
 
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex}
-};
-
+use std::{net::SocketAddr, sync::{Arc, Mutex}};
 use axum::{
+    extract::{State, Json},
+    response::IntoResponse,
     routing::{get, post},
     Router,
-    extract::{State, Json},
 };
 use clap::Parser;
 use tokio;
+use serde_json::{json, to_string_pretty};
+use reqwest::Client;
 
-use crate::blockchain::node::Node; // seu Node (contendo blockchain, etc.)
-use crate::wallet::transaction::Transaction;
+// Se quiser broadcast no /mine, habilite no Cargo.toml: reqwest = { version="0.11", features=["json"] }
+// use reqwest::Client;
 
 use crate::blockchain::block::Block;
-use reqwest::Client; // para fazer POST nos peers
-use axum::response::IntoResponse;
+use crate::blockchain::blockchain::Blockchain;
+use crate::blockchain::node::Node; // Node => fn receive_block(&mut self, block: Block, from_node: &Node)
+use crate::wallet::transaction::Transaction;
 
 #[derive(Debug, Parser)]
-#[clap(name = "blockchainpow")]
+#[clap(name="blockchainpow")]
 struct Args {
     #[clap(long, default_value="3000")]
     port: u16,
@@ -37,92 +37,130 @@ struct AppState {
     peers: Vec<String>,
 }
 
-//GET /chain – para consultar a chain local.
-//POST /transaction – para enviar transações.
-//POST /block – para enviar blocos minerados.
-
-async fn get_chain_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
-    let node = state.node.lock().unwrap();
-    let blocks = &node.blockchain.blocks;
-    // Retornamos um JSON com "length" e "blocks"
-    Json(serde_json::json!({
-        "length": blocks.len(),
-        "blocks": blocks,
-    }))
+/// Ao criar uma cópia do Node, podemos passá-la como `&Node` sem conflitar com o &mut node_guard
+/// (evitando o erro E0502).
+fn make_node_copy(original: &Node) -> Node {
+    Node {
+        node_id: original.node_id,
+        blockchain: original.blockchain.clone(), // copia o Blockchain
+        peers: original.peers.clone(),           // copia lista de peers
+    }
 }
 
+//------------------------------------------------------------------------------
+// Handlers
+//------------------------------------------------------------------------------
+
+/// GET /chain: retorna os blocos em JSON "indentado"
+async fn get_chain_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let node_guard = state.node.lock().unwrap();
+    let blocks = &node_guard.blockchain.blocks;
+    let chain_json = json!({ "length": blocks.len(), "blocks": blocks });
+    let pretty_chain = to_string_pretty(&chain_json).unwrap();
+    (
+        axum::http::StatusCode::OK,
+        [("Content-Type", "application/json")],
+        pretty_chain
+    )
+}
+
+/// POST /transaction: insere transação no mempool
 async fn receive_transaction_handler(
     State(state): State<AppState>,
     Json(tx): Json<Transaction>,
-) -> &'static str {
+) -> impl IntoResponse {
     let mut node = state.node.lock().unwrap();
-    node.receive_transaction(tx);
-    // se quiser, broadcastar para peers via reqwest
-    "Transaction received"
+    // Adiciona a transação ao mempool local
+    node.receive_transaction(tx.clone());
+    drop(node); // solta o lock antes de fazer as requisições async
+
+    // (Opcional) Agora broadcast para peers
+    let client = Client::new();
+    for peer in &state.peers {
+        let url = format!("http://{}/transaction", peer);
+        // Enviamos a mesma transação
+        let _ = client.post(&url).json(&tx).send().await;
+    }
+
+    "Transaction received and broadcasted"
 }
 
-async fn receive_block_handler(State(state): State<AppState>) -> &'static str {
-    // Precisamos extrair o Block do JSON? Exemplo:
-    //    async fn receive_block_handler(State(state): State<AppState>, Json(block): Json<Block>) -> ...
-    // Por ora, so print
-    let mut node = state.node.lock().unwrap();
-    // node.receive_block(block); // se tiver esse método
+/// POST /block: recebe bloco minerado de outro nó
+///
+/// `node.rs` define:
+///   fn receive_block(&mut self, block: Block, from_node: &Node)
+/// Precisamos passar DOIS argumentos:
+///   1) &mut self (node_guard)
+///   2) &Node (from_node)
+///
+/// Para não incorrer em E0502 (não podemos usar &*node_guard como from_node),
+/// criamos uma CÓPIA do Node (`from_node_copy`), e passamos &from_node_copy.
+async fn receive_block_handler(State(state): State<AppState>, Json(block): Json<Block>) -> impl IntoResponse {
+    let mut node_guard = state.node.lock().unwrap();
+
+    // Cria um Node "cópia" com os campos principais
+    let from_node_copy = make_node_copy(&node_guard);
+
+    // Agora chamamos receive_block(block, &from_node_copy)
+    //   - `node_guard` é &mut Node
+    //   - from_node_copy é um Node separado, então passamos &Node sem conflito
+    node_guard.receive_block(block, &from_node_copy);
+
     "Block received"
 }
 
-async fn mine_handler(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
-    let mut node = state.node.lock().unwrap();
+/// POST /mine: cria bloco local, (opcional) broadcast p/ peers
+async fn mine_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let mut node_guard = state.node.lock().unwrap();
+    node_guard.blockchain.add_block(); 
+    let new_block = node_guard.blockchain.blocks.last().unwrap().clone();
+    let idx = new_block.index;
+    drop(node_guard);
 
-    node.blockchain.add_block(); 
-    let new_block = node.blockchain.blocks.last().unwrap().clone();
-    let index = new_block.index;
-    drop(node);
+    // Se quiser broadcastar:
+    // let client = Client::new();
+    // for peer in &state.peers {
+    //     let url = format!("http://{}/block", peer);
+    //     let _ = client.post(&url).json(&new_block).send().await;
+    // }
 
-    // broadcast ...
-
-    // Retorna algo que Axum converte em 200 OK com body
-    format!("Mined new block index={}", index)
+    format!("Mined new block index={}", idx)
 }
+
+//------------------------------------------------------------------------------
+// main
+//------------------------------------------------------------------------------
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
     let port = args.port;
     let peers_str = args.peers;
-
     let peers: Vec<String> = if peers_str.is_empty() {
         vec![]
     } else {
-        peers_str.split(',')
-            .map(|s| s.trim().to_string())
-            .collect()
+        peers_str.split(',').map(|s| s.trim().to_string()).collect()
     };
 
-     // Cria Node. Se seu Node::new exigir ID, você pode gerar algo ou parse
-     let node = Node::new(1);
-     // Embrulha em Arc<Mutex<_>>
-     let state = AppState {
-         node: Arc::new(Mutex::new(node)),
-         peers,
-     };
- 
-     // Definir rotas
-     let app = Router::new()
-         .route("/chain", get(get_chain_handler))
-         .route("/transaction", post(receive_transaction_handler))
-         .route("/block", post(receive_block_handler))
-         .route("/mine", post(mine_handler))
-         .with_state(state);
- 
-     // Sobe servidor
-     let addr = SocketAddr::from(([0,0,0,0], port));
-     println!("Nó ouvindo em http://{}", addr);
- 
-     axum::Server::bind(&addr)
-         .serve(app.into_make_service())
-         .await
-         .unwrap();
- 
+    // Cria Node com ID=1 (ou o que preferir)
+    let node = Node::new(1);
+    let state = AppState {
+        node: Arc::new(Mutex::new(node)),
+        peers,
+    };
+
+    let app = Router::new()
+        .route("/chain", get(get_chain_handler))
+        .route("/transaction", post(receive_transaction_handler))
+        .route("/block", post(receive_block_handler))
+        .route("/mine", post(mine_handler))
+        .with_state(state);
+
+    let addr = SocketAddr::from(([0,0,0,0], port));
+    println!("Nó ouvindo em http://{}", addr);
+
+    axum::Server::bind(&addr)
+        .serve(app.into_make_service())
+        .await
+        .unwrap();
 }
