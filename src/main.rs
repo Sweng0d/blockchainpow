@@ -1,120 +1,128 @@
 mod blockchain;
 mod wallet;
 
-use crate::blockchain::node::Node;
-use crate::wallet::wallet::generate_wallet;
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex}
+};
+
+use axum::{
+    routing::{get, post},
+    Router,
+    extract::{State, Json},
+};
+use clap::Parser;
+use tokio;
+
+use crate::blockchain::node::Node; // seu Node (contendo blockchain, etc.)
 use crate::wallet::transaction::Transaction;
 
-use std::sync::{Arc, Mutex};
+use crate::blockchain::block::Block;
+use reqwest::Client; // para fazer POST nos peers
+use axum::response::IntoResponse;
 
-fn main() {
-    println!("=== Simulação de múltiplos nós com Proof of Work ===");
+#[derive(Debug, Parser)]
+#[clap(name = "blockchainpow")]
+struct Args {
+    #[clap(long, default_value="3000")]
+    port: u16,
 
-    // 1) Crie três nós protegidos por Arc<Mutex<>> e coloque-os num Vec
-    let nodes: Vec<Arc<Mutex<Node>>> = vec![
-        Arc::new(Mutex::new(Node::new(1))),
-        Arc::new(Mutex::new(Node::new(2))),
-        Arc::new(Mutex::new(Node::new(3))),
-    ];
+    #[clap(long, default_value="")]
+    peers: String,
+}
 
-    // 2) Configure peers
-    //    Cada nó tem peers = IDs dos outros (por exemplo, node1 -> 2,3 etc.)
-    {
-        let mut n0 = nodes[0].lock().unwrap();
-        n0.peers = vec![1, 2]; // ou [2, 3] se preferir
-    }
-    {
-        let mut n1 = nodes[1].lock().unwrap();
-        n1.peers = vec![0, 2]; // ou [1, 3]
-    }
-    {
-        let mut n2 = nodes[2].lock().unwrap();
-        n2.peers = vec![0, 1]; // ou [1, 2]
-    }
+#[derive(Clone)]
+struct AppState {
+    node: Arc<Mutex<Node>>,
+    peers: Vec<String>,
+}
 
-    // 3) Gera três carteiras
-    let wallet1 = generate_wallet();
-    let wallet2 = generate_wallet();
-    let wallet3 = generate_wallet();
+//GET /chain – para consultar a chain local.
+//POST /transaction – para enviar transações.
+//POST /block – para enviar blocos minerados.
 
-    println!("Carteira1 address: {}", wallet1.address);
-    println!("Carteira2 address: {}", wallet2.address);
-    println!("Carteira3 address: {}", wallet3.address);
+async fn get_chain_handler(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let node = state.node.lock().unwrap();
+    let blocks = &node.blockchain.blocks;
+    // Retornamos um JSON com "length" e "blocks"
+    Json(serde_json::json!({
+        "length": blocks.len(),
+        "blocks": blocks,
+    }))
+}
 
-    // 4) node1 cria transação e envia a node2
-    let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 50)
-        .expect("Failed to create the transaction");
+async fn receive_transaction_handler(
+    State(state): State<AppState>,
+    Json(tx): Json<Transaction>,
+) -> &'static str {
+    let mut node = state.node.lock().unwrap();
+    node.receive_transaction(tx);
+    // se quiser, broadcastar para peers via reqwest
+    "Transaction received"
+}
 
-    let tx_hash = tx1.tx_hash();
-    println!("tx1 hash is {}", tx_hash);
+async fn receive_block_handler(State(state): State<AppState>) -> &'static str {
+    // Precisamos extrair o Block do JSON? Exemplo:
+    //    async fn receive_block_handler(State(state): State<AppState>, Json(block): Json<Block>) -> ...
+    // Por ora, so print
+    let mut node = state.node.lock().unwrap();
+    // node.receive_block(block); // se tiver esse método
+    "Block received"
+}
 
-    {
-        // Trave node1 e node2 para usar &mut Node
-        let mut node1_lock = nodes[0].lock().unwrap();
-        let mut node2_lock = nodes[1].lock().unwrap();
+async fn mine_handler(
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let mut node = state.node.lock().unwrap();
 
-        // Chame o método send_transaction normalmente
-        // (Assumindo que send_transaction é algo como fn send_transaction(&mut self, to: &mut Node, ...))
-        node1_lock.send_transaction(&mut *node2_lock, Ok(tx1));
-    }
+    node.blockchain.add_block(); 
+    let new_block = node.blockchain.blocks.last().unwrap().clone();
+    let index = new_block.index;
+    drop(node);
 
-    // 5) node2 minera bloco
-    {
-        let mut node2_lock = nodes[1].lock().unwrap();
-        println!("\nNode2 vai minerar bloco com transações pendentes...");
-        node2_lock.blockchain.add_block();
-        // Agora node2 tem 2 blocos (gênese + bloco recém-minerado)
-    }
+    // broadcast ...
 
-    // 6) Pegue o último bloco minerado para broadcast
-    let last_block = {
-        let node2_lock = nodes[1].lock().unwrap();
-        node2_lock.blockchain.blocks.last().unwrap().clone()
+    // Retorna algo que Axum converte em 200 OK com body
+    format!("Mined new block index={}", index)
+}
+
+#[tokio::main]
+async fn main() {
+    let args = Args::parse();
+    let port = args.port;
+    let peers_str = args.peers;
+
+    let peers: Vec<String> = if peers_str.is_empty() {
+        vec![]
+    } else {
+        peers_str.split(',')
+            .map(|s| s.trim().to_string())
+            .collect()
     };
-    println!(
-        "Node2 broadcasta bloco de index {} para node1",
-        last_block.index
-    );
 
-    // 7) Broadcast do bloco
-    {
-        let mut node2_lock = nodes[1].lock().unwrap();
-
-        // Precisamos passar a lista de nós para broadcast_block;
-        // Então a função broadcast_block deve aceitar algo como
-        // broadcast_block(&mut self, block: Block, all_nodes: &[Arc<Mutex<Node>>])
-        node2_lock.broadcast_block(last_block, &nodes);
-    }
-
-    // 8) Verificar a validade da blockchain do node1 e node2
-    {
-        let node1_lock = nodes[0].lock().unwrap();
-        println!(
-            "\nNode1 blockchain is valid? {}",
-            node1_lock.blockchain.is_valid()
-        );
-    }
-    {
-        let node2_lock = nodes[1].lock().unwrap();
-        println!(
-            "Node2 blockchain is valid? {}",
-            node2_lock.blockchain.is_valid()
-        );
-    }
-
-    // 9) Exibir blockchains em JSON
-    {
-        let node1_lock = nodes[0].lock().unwrap();
-        let json_node1 = serde_json::to_string_pretty(&node1_lock.blockchain)
-            .expect("Fail to serialize node1 chain");
-        println!("\n=== Node1 Blockchain ===\n{}", json_node1);
-    }
-    {
-        let node2_lock = nodes[1].lock().unwrap();
-        let json_node2 = serde_json::to_string_pretty(&node2_lock.blockchain)
-            .expect("Fail to serialize node2 chain");
-        println!("\n=== Node2 Blockchain ===\n{}", json_node2);
-    }
-
-    println!("\n=== Fim da simulação ===");
+     // Cria Node. Se seu Node::new exigir ID, você pode gerar algo ou parse
+     let node = Node::new(1);
+     // Embrulha em Arc<Mutex<_>>
+     let state = AppState {
+         node: Arc::new(Mutex::new(node)),
+         peers,
+     };
+ 
+     // Definir rotas
+     let app = Router::new()
+         .route("/chain", get(get_chain_handler))
+         .route("/transaction", post(receive_transaction_handler))
+         .route("/block", post(receive_block_handler))
+         .route("/mine", post(mine_handler))
+         .with_state(state);
+ 
+     // Sobe servidor
+     let addr = SocketAddr::from(([0,0,0,0], port));
+     println!("Nó ouvindo em http://{}", addr);
+ 
+     axum::Server::bind(&addr)
+         .serve(app.into_make_service())
+         .await
+         .unwrap();
+ 
 }
