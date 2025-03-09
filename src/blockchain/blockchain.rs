@@ -168,7 +168,7 @@ impl Blockchain {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generate_wallet;
+    use crate::wallet::wallet::generate_wallet;
 
     #[allow(dead_code)]
     fn test_add_valid_transaction_to_mempool_and_find() {
