@@ -3,22 +3,15 @@ use secp256k1::ecdsa::Signature;
 use sha2::{Sha256, Digest};
 use crate::wallet::wallet::Wallet;
 use serde::{Serialize, Deserialize};
+use crate::errors::TransactionError; 
 
 #[derive(Debug, PartialEq, Serialize, Deserialize, Clone)]
 pub struct Transaction {
     pub from_address: String,   
     pub to_address: String,
     pub amount: u64,
-    #[serde(skip)]
     pub public_key: Option<PublicKey>,
-    #[serde(skip)]
     pub signature: Option<Signature>,
-}
-
-#[derive(Debug, Clone)]
-pub enum TransactionError {
-    InvalidAmount,
-    // Can have other errors -> InvalidSignature etc
 }
 
 impl Transaction {
@@ -154,14 +147,16 @@ mod tests {
         let from_wallet = generate_wallet();
         let to_wallet = generate_wallet();
 
-        // Tenta criar transação com amount=0 => deve retornar Err(TransactionError::InvalidAmount)
         let tx_result = Transaction::new_signed(&from_wallet, to_wallet.address.clone(), 0);
         assert!(tx_result.is_err(), "Esperado erro pois amount=0");
 
         if let Err(e) = tx_result {
             match e {
                 TransactionError::InvalidAmount => {
-                    // Ok, é o erro esperado
+                    // Erro esperado, teste passa
+                }
+                TransactionError::InvalidSignature(_) | TransactionError::InvalidTx(_) => {
+                    panic!("Esperado TransactionError::InvalidAmount, mas recebeu outro erro");
                 }
             }
         }

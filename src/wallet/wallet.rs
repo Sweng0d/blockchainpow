@@ -2,6 +2,7 @@ use secp256k1::{Secp256k1, SecretKey, PublicKey};
 use rand::rngs::OsRng;
 use sha2::{Sha256, Digest};
 
+#[derive(Clone)]
 pub struct Wallet {
     pub secret_key: SecretKey,
     pub public_key: PublicKey,

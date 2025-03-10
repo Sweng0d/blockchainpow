@@ -1,26 +1,17 @@
 use axum::{
     extract::{State},
     response::IntoResponse,
-    http::StatusCode
+    http::StatusCode,
+    Json,
 };
-use serde_json::{json, to_string_pretty};
+use crate::AppState;
 
-use crate::AppState; // Vamos definir AppState em main.rs, depois importamos aqui
-
-/// GET /chain - exibe chain local
 pub async fn get_chain_handler(State(state): State<AppState>) -> impl IntoResponse {
     let node_guard = state.node.lock().unwrap();
-    let blocks = &node_guard.blockchain.blocks;
-
-    let chain_obj = json!({
-        "length": blocks.len(),
-        "blocks": blocks
-    });
-    let pretty_chain = to_string_pretty(&chain_obj).unwrap();
-    (axum::http::StatusCode::OK, [("Content-Type","application/json")], pretty_chain)
+    let blocks = node_guard.blockchain.blocks.clone(); // Clone os dados para evitar referência temporária
+    (StatusCode::OK, Json(blocks))
 }
 
-/// POST /mine - minera bloco local
 pub async fn mine_handler(State(state): State<AppState>) -> impl IntoResponse {
     let mut node_guard = state.node.lock().unwrap();
     node_guard.blockchain.add_block();
@@ -28,12 +19,18 @@ pub async fn mine_handler(State(state): State<AppState>) -> impl IntoResponse {
     let idx = new_block.index;
     drop(node_guard);
 
-    // Se quiser broadcastar, descomente e use reqwest
-    // let client = Client::new();
-    // for peer in &state.peers {
-    //     let url = format!("http://{}/block", peer);
-    //     let _ = client.post(&url).json(&new_block).send().await;
-    // }
+    let response = serde_json::json!({
+        "message": "Mined new block",
+        "index": idx
+    });
+    (StatusCode::OK, Json(response))
+}
 
-    format!("Mined new block index={}", idx)
+pub async fn get_mempool_handler(State(state): State<AppState>) -> impl IntoResponse {
+    let node_guard = state.node.lock().unwrap();
+    let pending = node_guard.blockchain.pending_transactions.clone(); // Clone para consistência
+    let mempool_obj = serde_json::json!({
+        "pending_transactions": pending
+    });
+    (StatusCode::OK, Json(mempool_obj))
 }

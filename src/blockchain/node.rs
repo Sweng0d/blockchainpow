@@ -1,10 +1,12 @@
 use crate::blockchain::blockchain::Blockchain;
 use crate::blockchain::block::Block;
-use crate::wallet::transaction::{Transaction, TransactionError};
+use crate::wallet::transaction::Transaction;
+use crate::errors::TransactionError; // Ajustado para usar o módulo errors
 use crate::blockchain::node_registry::{register_id, unregister_id};
-
 use std::sync::{Arc, Mutex};
 use std::fmt;
+use secp256k1::{Secp256k1, Message};
+use sha2::{Sha256, Digest};
 
 /// Ajuste aqui se quiser mudar o tipo do ID.
 pub type NodeId = u32;
@@ -35,8 +37,6 @@ impl Node {
     /// Construtor que recebe um ID escolhido.
     /// Se o ID estiver em uso, faz panic (poderia retornar Result, se preferir).
     pub fn new(node_id: NodeId) -> Self {
-        // Verifica e registra a ID (fazendo unwrap para simplificar).
-        // Se já estiver em uso, panic.
         register_id(node_id).unwrap_or_else(|msg| {
             panic!("Failed to create Node with ID {}: {}", node_id, msg);
         });
@@ -122,6 +122,33 @@ impl Node {
     pub fn remove_peer(&mut self, peer_id: NodeId) {
         self.peers.retain(|&id| id != peer_id);
     }
+
+    pub fn verify_signature(&self, tx: &Transaction) -> Result<(), TransactionError> {
+        let public_key = tx
+            .public_key
+            .as_ref()
+            .ok_or(TransactionError::InvalidTx("Missing public key".to_string()))?;
+        let signature = tx
+            .signature
+            .as_ref()
+            .ok_or(TransactionError::InvalidTx("Missing signature".to_string()))?;
+
+        // Transformar (from_address, to_address, amount) em um hash
+        let data_string = format!("{}|{}|{}", tx.from_address, tx.to_address, tx.amount);
+        let mut hasher = Sha256::new();
+        hasher.update(data_string.as_bytes());
+        let result = hasher.finalize();
+
+        // Criar mensagem a partir do hash
+        let message = Message::from_digest_slice(&result).expect("Hash deve ter 32 bytes");
+
+        // Verificar a assinatura usando secp256k1
+        let secp = Secp256k1::new();
+        secp.verify_ecdsa(&message, signature, public_key)
+            .map_err(|_| TransactionError::InvalidSignature("Signature does not match".to_string()))?;
+
+        Ok(())
+    }
 }
 
 /// Quando o `Node` sai de escopo, liberamos o ID no registro
@@ -134,7 +161,6 @@ impl Drop for Node {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wallet::transaction::Transaction;
     use crate::wallet::wallet::generate_wallet;
 
     /// Teste 1: usa IDs=10 e 11
@@ -147,21 +173,14 @@ mod tests {
         node2.peers = vec![10];
 
         let wallet1 = generate_wallet();
-
         let tx1 = Transaction::new_signed(&wallet1, "Bob".to_string(), 30)
             .expect("Failed to create the transaction");
 
-        // Envia transação node1 -> node2
         node1.send_transaction(&mut node2, Ok(tx1.clone()));
-
-        // Verifica se node2 recebeu
         assert_eq!(node2.blockchain.pending_transactions.len(), 1);
-
         let received_tx = &node2.blockchain.pending_transactions[0];
-        assert_eq!(*received_tx, tx1.clone());
-
-        // Verifica se node1 também guardou em seu mempool
-        assert_eq!(node1.blockchain.pending_transactions[0], tx1.clone());
+        assert_eq!(*received_tx, tx1);
+        assert_eq!(node1.blockchain.pending_transactions[0], tx1);
     }
 
     /// Teste 2: usa ID=12
@@ -178,17 +197,11 @@ mod tests {
             .expect("Failed to create the transaction");
         let tx_invalid_result = Transaction::new_signed(&wallet1, wallet2.address.clone(), 0);
 
-        assert!(
-            tx_invalid_result.is_err(),
-            "Transação com amount=0 deveria falhar e retornar Err"
-        );
-
+        assert!(tx_invalid_result.is_err(), "Transação com amount=0 deveria falhar");
         node1.receive_transaction(tx1.clone());
         node1.receive_transaction(tx2.clone());
 
-        // Minerar
         node1.blockchain.add_block();
-
         let last_block = node1
             .blockchain
             .blocks
@@ -203,33 +216,23 @@ mod tests {
     /// Teste 3: usa IDs=20,21,22
     #[test]
     fn test_broadcast_block() {
-        use std::sync::{Arc, Mutex};
-        use crate::wallet::transaction::Transaction;
-        use crate::wallet::wallet::generate_wallet;
-
-        // Cria Node com IDs 0,1,2 (batendo com o slice de 3 elementos)
         let node0 = Arc::new(Mutex::new(Node::new(0)));
         let node1 = Arc::new(Mutex::new(Node::new(1)));
         let node2 = Arc::new(Mutex::new(Node::new(2)));
 
-        // Ajusta peers:
         {
             let mut n0 = node0.lock().unwrap();
-            // node0 -> peers = [1,2]
             n0.peers = vec![1, 2];
         }
         {
             let mut n1 = node1.lock().unwrap();
-            // node1 -> peers = [0,2]
             n1.peers = vec![0, 2];
         }
         {
             let mut n2 = node2.lock().unwrap();
-            // node2 -> peers = [0,1]
             n2.peers = vec![0, 1];
         }
 
-        // Gera carteiras e transações
         let wallet1 = generate_wallet();
         let wallet2 = generate_wallet();
 
@@ -238,28 +241,20 @@ mod tests {
         let tx2 = Transaction::new_signed(&wallet1, wallet2.address.clone(), 200)
             .expect("Failed to create tx2");
 
-        // node0 recebe essas transações e minera um bloco
-        {
+        let last_block = {
             let mut n0 = node0.lock().unwrap();
             n0.receive_transaction(tx1.clone());
             n0.receive_transaction(tx2.clone());
             n0.blockchain.add_block();
             assert_eq!(n0.blockchain.blocks.len(), 2);
-        }
-
-        // Pega o último bloco minerado em node0
-        let last_block = {
-            let n0 = node0.lock().unwrap();
             n0.blockchain.blocks.last().unwrap().clone()
         };
 
-        // node0 faz broadcast do bloco para [node0, node1, node2] (tamanho 3 = índices 0..2)
         {
             let mut n0 = node0.lock().unwrap();
             n0.broadcast_block(last_block.clone(), &[node0.clone(), node1.clone(), node2.clone()]);
         }
 
-        // Verifica se node1 recebeu o bloco
         {
             let n1 = node1.lock().unwrap();
             assert_eq!(n1.blockchain.blocks.len(), 2);
@@ -269,7 +264,6 @@ mod tests {
             assert!(last_block_node1.transactions.contains(&tx2));
         }
 
-        // Verifica se node2 recebeu o bloco
         {
             let n2 = node2.lock().unwrap();
             assert_eq!(n2.blockchain.blocks.len(), 2);
@@ -280,7 +274,6 @@ mod tests {
         }
     }
 
-
     /// Teste 4: usa IDs=30 e 31
     #[test]
     fn replace_longer_chain() {
@@ -289,7 +282,6 @@ mod tests {
 
         assert_eq!(node_short.blockchain.blocks.len(), 1);
 
-        // nodeLong faz vários blocos
         node_long.blockchain.add_block();
         node_long.blockchain.add_block();
         node_long.blockchain.add_block();
@@ -297,12 +289,9 @@ mod tests {
         assert_eq!(node_long.blockchain.blocks.len(), 4);
         assert_eq!(node_short.blockchain.blocks.len(), 1);
 
-        // Passa o último bloco de nodeLong para nodeShort
         let last_block_node_long = node_long.blockchain.blocks.last().unwrap().clone();
         node_short.receive_block(last_block_node_long, &node_long);
 
-        // Se o índice do bloco for maior do que node_short já tem,
-        // node_short deve substituir a chain inteira
         assert_eq!(
             node_short.blockchain.blocks.len(),
             node_long.blockchain.blocks.len(),
@@ -336,11 +325,9 @@ mod tests {
             .expect("Deveria haver um bloco");
 
         let mut block_fork = block_normal.clone();
-
-        // Simulação de "fork": mexe em transações e no hash
         block_fork.transactions = vec![];
         block_fork.hash = "fake_hash_of_fork".to_string();
-        // ...
+        // Teste incompleto no original, mantido como está
     }
 
     /// Teste 6: ID=50
@@ -361,60 +348,32 @@ mod tests {
         node.receive_transaction(tx2);
         node.blockchain.add_block();
 
-        assert_eq!(
-            node.blockchain.blocks.len(),
-            3,
-            "Esperado 3 blocos (Genesis + 2)"
-        );
+        assert_eq!(node.blockchain.blocks.len(), 3);
+        assert!(node.blockchain.is_valid());
 
-        assert!(
-            node.blockchain.is_valid(),
-            "A blockchain deve ser válida após blocos minerados corretamente"
-        );
-
-        // Corrompe o bloco 1
         let mut corrupt_block = node.blockchain.blocks[1].clone();
         corrupt_block.transactions.clear();
-
         node.blockchain.blocks[1] = corrupt_block;
 
-        // Deve invalidar a chain
-        assert!(
-            !node.blockchain.is_valid(),
-            "Alterar dados de um bloco deve invalidar toda a chain"
-        );
+        assert!(!node.blockchain.is_valid());
     }
 
     #[test]
     fn test_add_and_remove_peer() {
-        // Cria um Node com ID 60
         let mut node = Node::new(60);
 
-        // No início, peers deve estar vazio
         assert!(node.peers.is_empty());
-
-        // Adiciona peer 61
         node.add_peer(61);
-        assert_eq!(node.peers, vec![61], "Depois de add_peer(61), peers deve ter [61]");
-
-        // Tenta adicionar peer 61 de novo (não deve duplicar)
+        assert_eq!(node.peers, vec![61]);
         node.add_peer(61);
-        assert_eq!(node.peers, vec![61], "Não deve ter duplicado o peer 61");
-
-        // Adiciona peer 62
+        assert_eq!(node.peers, vec![61]);
         node.add_peer(62);
-        assert_eq!(node.peers, vec![61, 62], "Agora deve ter [61, 62]");
-
-        // Remove peer 61
+        assert_eq!(node.peers, vec![61, 62]);
         node.remove_peer(61);
-        assert_eq!(node.peers, vec![62], "Depois de remover peer 61, deve restar [62]");
-
-        // Tenta remover peer 61 novamente, mas ele já não existe
+        assert_eq!(node.peers, vec![62]);
         node.remove_peer(61);
-        assert_eq!(node.peers, vec![62], "Remover peer que não existe não muda nada");
-
-        // Remove peer 62
+        assert_eq!(node.peers, vec![62]);
         node.remove_peer(62);
-        assert!(node.peers.is_empty(), "Lista de peers deve ficar vazia novamente");
+        assert!(node.peers.is_empty());
     }
 }

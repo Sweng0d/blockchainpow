@@ -8,14 +8,13 @@ use std::collections::HashMap;
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Blockchain {
     pub blocks: Vec<Block>,
-    pub pending_transactions: Vec<Transaction>, //mempool
+    pub pending_transactions: Vec<Transaction>,
     pub difficulty: u32,
     #[serde(skip)]
     pub tx_map: HashMap<String, Transaction>,
 }
 
 impl Blockchain {
-    //create a new blockchain
     pub fn new() -> Self {
         let mut blockchain = Blockchain {
             blocks: Vec::new(),
@@ -23,18 +22,13 @@ impl Blockchain {
             difficulty: 3,
             tx_map: HashMap::new(),
         };
-
-        // genesis block
         let genesis = Block::new(0, vec![], "0".to_string());
         blockchain.blocks.push(genesis);
-
         blockchain 
     }
 
-    //add transactions to mempool
     pub fn add_transaction_to_mempool(&mut self, tx: Transaction) {
         let txid = tx.tx_hash();
-
         if tx.is_valid() {
             self.tx_map.insert(txid, tx.clone());
             self.pending_transactions.push(tx);
@@ -43,41 +37,36 @@ impl Blockchain {
         }
     }
 
-    //add block to the blockchain. It will calculate_hash and mineblock, and afterwards add it to the blockchain.
     pub fn add_block(&mut self) {
         let index = self.blocks.len() as u64;
-    
         let previous_hash = if let Some(last_block) = self.blocks.last() {
-            &last_block.hash
+            last_block.hash.clone()
         } else {
-            "0"
+            "0".to_string()
         };
-    
-        // Clona as transações pendentes
+        
+        println!("Pending transactions antes de criar bloco: {:?}", self.pending_transactions);
         let txs = self.pending_transactions.clone();
-        // Limpa a mempool
         self.pending_transactions.clear();
-    
-        // Cria novo bloco
-        let mut new_block = Block::new(index, txs, previous_hash.to_string());
-    
-        // Faz a mineração
+        println!("Transações a serem incluídas no bloco: {:?}", txs);
+        
+        let mut new_block = Block::new(index, txs, previous_hash);
+        println!("Bloco criado com transações: {:?}", new_block.transactions);
+        
         new_block.mine_block(self.difficulty);
-    
-        // Agora checamos se está realmente válido
+        println!("Bloco minerado com transações: {:?}", new_block.transactions);
+        
         if !new_block.is_valid(self.difficulty) {
             println!("Bloco inválido (hash inconsistente ou proof-of-work falhou). Não adicionando!");
             return;
         }
-    
-        // Se quiser, também garantir que new_block.previous_hash == blocks.last().hash, podemos checar:
         if new_block.previous_hash != self.blocks.last().unwrap().hash {
             println!("Bloco inválido (previous_hash difere do hash do último bloco). Não adicionando!");
             return;
         }
-    
-        // Se tudo certo, empurra na cadeia
+        
         self.blocks.push(new_block);
+        println!("Bloco adicionado à blockchain: {:?}", self.blocks.last().unwrap());
     }
     
 
