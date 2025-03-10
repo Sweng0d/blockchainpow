@@ -15,9 +15,9 @@ use std::collections::HashMap;
 
 use crate::blockchain::node::Node;
 use crate::routes::{
-    chain_routes::{get_chain_handler, mine_handler, get_mempool_handler},
+    chain_routes::{get_chain_handler, mine_handler, get_mempool_handler, sync_chain_handler},
     peer_routes::{get_peers_handler, add_peer_handler},
-    transaction_routes::{receive_transaction_handler, create_transaction_handler}, // Adicione create_transaction_handler
+    transaction_routes::{receive_transaction_handler, create_transaction_handler},
     wallet_routes::create_wallet_handler,
 };
 
@@ -64,9 +64,10 @@ async fn main() {
         .route("/chain", get(get_chain_handler))
         .route("/mine", post(mine_handler))
         .route("/transaction", post(receive_transaction_handler))
-        .route("/transaction/create", post(create_transaction_handler)) // Adicionada a rota
+        .route("/transaction/create", post(create_transaction_handler))
         .route("/peers", get(get_peers_handler).post(add_peer_handler))
         .route("/mempool", get(get_mempool_handler))
+        .route("/chain/sync", post(sync_chain_handler))
         .route("/wallet/create", post(create_wallet_handler))
         .with_state(state);
 

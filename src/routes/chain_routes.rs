@@ -34,3 +34,18 @@ pub async fn get_mempool_handler(State(state): State<AppState>) -> impl IntoResp
     });
     (StatusCode::OK, Json(mempool_obj))
 }
+
+pub async fn sync_chain_handler(
+    State(state): State<AppState>,
+    Json(new_chain): Json<Vec<crate::blockchain::block::Block>>,
+) -> impl IntoResponse {
+    let mut node_guard = state.node.lock().unwrap();
+    let current_length = node_guard.blockchain.blocks.len();
+    if new_chain.len() > current_length && node_guard.blockchain.is_valid() {
+        println!("Recebida blockchain maior, sincronizando...");
+        node_guard.blockchain.blocks = new_chain;
+        (StatusCode::OK, Json(serde_json::json!({"message": "Blockchain synchronized"})))
+    } else {
+        (StatusCode::BAD_REQUEST, Json(serde_json::json!({"message": "Invalid or shorter chain"})))
+    }
+}
